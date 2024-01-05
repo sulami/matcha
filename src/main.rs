@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use tokio::task::JoinSet;
 
 pub(crate) mod package;
 mod state;
@@ -16,20 +17,32 @@ async fn main() -> Result<()> {
 
     match args.command {
         Command::Install { pkgs } => {
+            let mut set = JoinSet::new();
+
             for pkg in pkgs {
-                let pkg = pkg.parse().context("failed to parse package name")?;
-                // TODO: Deal with rollbacks for failed installs.
-                state
-                    .add_installed_package(&pkg)
-                    .await
-                    .context("failed to register installed package")?;
-                println!("Installed {pkg}");
+                let state = state.clone();
+                set.spawn(async move { install_package(&state, &pkg).await });
             }
+
+            let mut results = vec![];
+            while let Some(result) = set.join_next().await {
+                results.push(result?);
+            }
+            results.into_iter().collect::<Result<()>>()?;
         }
         Command::Uninstall { pkgs } => {
+            let mut set = JoinSet::new();
+
             for pkg in pkgs {
-                uninstall_package(&state, &pkg).await?
+                let state = state.clone();
+                set.spawn(async move { uninstall_package(&state, &pkg).await });
             }
+
+            let mut results = vec![];
+            while let Some(result) = set.join_next().await {
+                results.push(result?);
+            }
+            results.into_iter().collect::<Result<()>>()?;
         }
         Command::List => {
             for pkg in state
@@ -78,6 +91,21 @@ enum Command {
     List,
 }
 
+/// Installs a package.
+async fn install_package(state: &State, pkg: &str) -> Result<()> {
+    let pkg = pkg.parse().context("failed to parse package name")?;
+
+    // TODO: Deal with rollbacks for failed installs.
+    state
+        .add_installed_package(&pkg)
+        .await
+        .context("failed to register installed package")?;
+
+    println!("Installed {pkg}");
+    Ok(())
+}
+
+/// Uninstalls a package.
 async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
     let mut pkg: Package = pkg.parse().context("failed to parse package name")?;
 

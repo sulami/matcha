@@ -11,6 +11,7 @@ use tokio::fs::create_dir_all;
 use crate::package::Package;
 
 /// The internal state of the application, backed by a SQLite database.
+#[derive(Clone)]
 pub struct State {
     /// The database connection pool.
     db: SqlitePool,
