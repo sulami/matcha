@@ -52,6 +52,15 @@ impl FromStr for Package {
     }
 }
 
+impl From<crate::manifest::Package> for Package {
+    fn from(pkg: crate::manifest::Package) -> Self {
+        Self {
+            name: pkg.name,
+            version: Some(pkg.version),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,5 +102,19 @@ mod tests {
 
         let pkg: Package = "foo@1.2.3".parse().unwrap();
         assert_eq!(pkg.to_string(), "foo@1.2.3");
+    }
+
+    #[test]
+    fn test_from_manifest_package() {
+        let pkg: Package = crate::manifest::Package {
+            name: "foo".to_string(),
+            version: "1.2.3".to_string(),
+            description: None,
+            homepage: None,
+            license: None,
+        }
+        .into();
+        assert_eq!(pkg.name, "foo");
+        assert_eq!(pkg.version, Some("1.2.3".to_string()));
     }
 }

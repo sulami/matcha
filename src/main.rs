@@ -2,8 +2,9 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use tokio::task::JoinSet;
 
+pub(crate) mod manifest;
 pub(crate) mod package;
-mod state;
+pub(crate) mod state;
 
 use package::Package;
 use state::State;

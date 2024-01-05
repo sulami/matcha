@@ -961,6 +961,7 @@ dependencies = [
  "anyhow",
  "clap",
  "indicatif",
+ "serde",
  "shellexpand",
  "sqlx",
  "tokio",
