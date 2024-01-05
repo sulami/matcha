@@ -30,6 +30,23 @@ impl State {
                 .await
                 .context("failed to connect to database")?
         };
+
+        let schema_version: String =
+            sqlx::query_scalar("SELECT value FROM meta WHERE key = 'schema_version'")
+                .fetch_one(&db)
+                .await
+                .context("failed to fetch schema version from database")?;
+        if schema_version
+            .parse::<i64>()
+            .context("failed to parse database schema version")?
+            > 1
+        {
+            return Err(anyhow!(
+                "unsupported database schema version {}",
+                schema_version
+            ));
+        }
+
         Ok(Self { db })
     }
 
@@ -85,6 +102,7 @@ impl State {
         let db =
             SqlitePool::connect_with(SqliteConnectOptions::from_str(path)?.create_if_missing(true))
                 .await?;
+
         Ok(db)
     }
 
