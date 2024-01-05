@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use tokio::task::JoinSet;
 
@@ -144,6 +144,10 @@ enum RegistryCommand {
 async fn install_package(state: &State, pkg: &str) -> Result<()> {
     let pkg = pkg.parse().context("failed to parse package name")?;
 
+    if state.is_package_installed(&pkg).await? {
+        return Err(anyhow!("package {} is already installed", pkg));
+    }
+
     // TODO: Deal with rollbacks for failed installs.
     state
         .add_installed_package(&pkg)
@@ -158,7 +162,7 @@ async fn install_package(state: &State, pkg: &str) -> Result<()> {
 async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
     let mut pkg: Package = pkg.parse().context("failed to parse package name")?;
 
-    state.resolve_installed_version(&mut pkg).await?;
+    state.resolve_installed_package_version(&mut pkg).await?;
 
     state
         .remove_installed_package(&pkg)
@@ -205,4 +209,106 @@ async fn list_registries(state: &State) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_install_package() {
+        let state = State::load(":memory:").await.unwrap();
+        let pkg = "foo@1.2.3";
+
+        install_package(&state, pkg).await.unwrap();
+        assert!(state
+            .is_package_installed(&pkg.parse().unwrap())
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_install_package_refuses_if_package_is_already_installed() {
+        let state = State::load(":memory:").await.unwrap();
+        let pkg = "foo@1.2.3";
+
+        install_package(&state, pkg).await.unwrap();
+        let result = install_package(&state, pkg).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_package() {
+        let state = State::load(":memory:").await.unwrap();
+        let pkg = "foo@1.2.3";
+
+        install_package(&state, pkg).await.unwrap();
+        uninstall_package(&state, pkg).await.unwrap();
+        assert!(!state
+            .is_package_installed(&pkg.parse().unwrap())
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_uninstall_package_refuses_if_package_is_not_installed() {
+        let state = State::load(":memory:").await.unwrap();
+        let pkg = "foo@1.2.3";
+
+        let result = uninstall_package(&state, pkg).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_packages() {
+        let state = State::load(":memory:").await.unwrap();
+        let pkg = "foo@1.2.3";
+
+        install_package(&state, pkg).await.unwrap();
+        list_packages(&state).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_list_packages_empty() {
+        let state = State::load(":memory:").await.unwrap();
+        list_packages(&state).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_add_registry() {
+        let state = State::load(":memory:").await.unwrap();
+        let uri = "https://example.invalid";
+
+        add_registry(&state, uri).await.unwrap();
+        assert!(state.registries().await.unwrap().contains(&uri.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_add_registry_refuses_if_registry_is_already_added() {
+        let state = State::load(":memory:").await.unwrap();
+        let uri = "https://example.invalid";
+
+        add_registry(&state, uri).await.unwrap();
+        let result = add_registry(&state, uri).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_remove_registry() {
+        let state = State::load(":memory:").await.unwrap();
+        let uri = "https://example.invalid";
+
+        add_registry(&state, uri).await.unwrap();
+        remove_registry(&state, uri).await.unwrap();
+        assert!(!state.registries().await.unwrap().contains(&uri.to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_remove_registry_refuses_if_registry_is_not_added() {
+        let state = State::load(":memory:").await.unwrap();
+        let uri = "https://example.invalid";
+
+        let result = remove_registry(&state, uri).await;
+        assert!(result.is_err());
+    }
 }

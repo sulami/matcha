@@ -51,3 +51,47 @@ impl FromStr for Package {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_package() {
+        let pkg: Package = "foo".parse().unwrap();
+        assert_eq!(pkg.name, "foo");
+        assert_eq!(pkg.version, None);
+
+        let pkg: Package = "foo@latest".parse().unwrap();
+        assert_eq!(pkg.name, "foo");
+        assert_eq!(pkg.version, Some("latest".to_string()));
+
+        let pkg: Package = "foo@1.2.3".parse().unwrap();
+        assert_eq!(pkg.name, "foo");
+        assert_eq!(pkg.version, Some("1.2.3".to_string()));
+    }
+
+    #[test]
+    fn test_is_fully_qualified() {
+        let pkg: Package = "foo".parse().unwrap();
+        assert!(!pkg.is_fully_qualified());
+
+        let pkg: Package = "foo@latest".parse().unwrap();
+        assert!(!pkg.is_fully_qualified());
+
+        let pkg: Package = "foo@1.2.3".parse().unwrap();
+        assert!(pkg.is_fully_qualified());
+    }
+
+    #[test]
+    fn test_display() {
+        let pkg: Package = "foo".parse().unwrap();
+        assert_eq!(pkg.to_string(), "foo");
+
+        let pkg: Package = "foo@latest".parse().unwrap();
+        assert_eq!(pkg.to_string(), "foo@latest");
+
+        let pkg: Package = "foo@1.2.3".parse().unwrap();
+        assert_eq!(pkg.to_string(), "foo@1.2.3");
+    }
+}
