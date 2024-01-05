@@ -67,6 +67,11 @@ impl State {
                 version TEXT NOT NULL,
                 PRIMARY KEY (name, version)
             );
+
+            CREATE TABLE IF NOT EXISTS registries (
+                uri TEXT NOT NULL,
+                PRIMARY KEY (uri)
+            );
             "#,
         )
         .execute(&db)
@@ -84,7 +89,7 @@ impl State {
     }
 
     /// Returns all installed packages.
-    pub async fn list_installed_packages(&self) -> Result<Vec<Package>> {
+    pub async fn installed_packages(&self) -> Result<Vec<Package>> {
         let packages = sqlx::query_as::<_, Package>("SELECT name, version FROM installed_packages")
             .fetch_all(&self.db)
             .await
@@ -123,7 +128,7 @@ impl State {
     /// or if multiple versions of the package are installed.
     pub async fn resolve_installed_version(&self, pkg: &mut Package) -> Result<()> {
         if !pkg.is_fully_qualified() {
-            let installed_versions = self.installed_versions(pkg).await?;
+            let installed_versions = self.installed_package_versions(pkg).await?;
             if installed_versions.is_empty() {
                 return Err(anyhow!("package {} is not installed", pkg));
             }
@@ -141,7 +146,7 @@ impl State {
     }
 
     /// Returns all installed versions of a package, ordered newest to oldest.
-    async fn installed_versions(&self, pkg: &Package) -> Result<Vec<String>> {
+    async fn installed_package_versions(&self, pkg: &Package) -> Result<Vec<String>> {
         let versions = sqlx::query_scalar(
             "SELECT version FROM installed_packages WHERE name = ? ORDER BY version DESC",
         )
@@ -150,5 +155,50 @@ impl State {
         .await
         .context("failed to fetch installed package versions from database")?;
         Ok(versions)
+    }
+
+    /// Adds a registry to the internal state.
+    pub async fn add_registry(&self, uri: &str) -> Result<()> {
+        if self.registry_exists(uri).await? {
+            return Err(anyhow!("registry {} already exists", uri));
+        }
+        sqlx::query("INSERT INTO registries (uri) VALUES (?)")
+            .bind(uri)
+            .execute(&self.db)
+            .await
+            .context("failed to insert registry into database")?;
+        Ok(())
+    }
+
+    /// Removes a registry from the internal state.
+    pub async fn remove_registry(&self, uri: &str) -> Result<()> {
+        if !self.registry_exists(uri).await? {
+            return Err(anyhow!("registry {} does not exist", uri));
+        }
+        sqlx::query("DELETE FROM registries WHERE uri = ?")
+            .bind(uri)
+            .execute(&self.db)
+            .await
+            .context("failed to remove registry from database")?;
+        Ok(())
+    }
+
+    /// Returns all registries.
+    pub async fn registries(&self) -> Result<Vec<String>> {
+        let registries = sqlx::query_scalar("SELECT uri FROM registries")
+            .fetch_all(&self.db)
+            .await
+            .context("failed to fetch registries from database")?;
+        Ok(registries)
+    }
+
+    /// Returns true if the registry exists.
+    async fn registry_exists(&self, uri: &str) -> Result<bool> {
+        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE uri = ?)")
+            .bind(uri)
+            .fetch_one(&self.db)
+            .await
+            .context("failed to check if registry exists in database")?;
+        Ok(exists)
     }
 }

@@ -44,15 +44,38 @@ async fn main() -> Result<()> {
             }
             results.into_iter().collect::<Result<()>>()?;
         }
-        Command::List => {
-            for pkg in state
-                .list_installed_packages()
-                .await
-                .context("Failed to list installed packages")?
-            {
-                println!("{pkg}");
+        Command::List => list_packages(&state).await?,
+        Command::Registry(cmd) => match cmd {
+            RegistryCommand::Add { uris } => {
+                let mut set = JoinSet::new();
+                for uri in uris {
+                    let state = state.clone();
+                    set.spawn(async move { add_registry(&state, &uri).await });
+                }
+
+                let mut results = vec![];
+                while let Some(result) = set.join_next().await {
+                    results.push(result?);
+                }
+                results.into_iter().collect::<Result<()>>()?;
             }
-        }
+            RegistryCommand::Remove { uris } => {
+                let mut set = JoinSet::new();
+                for uri in uris {
+                    let state = state.clone();
+                    set.spawn(async move { remove_registry(&state, &uri).await });
+                }
+
+                let mut results = vec![];
+                while let Some(result) = set.join_next().await {
+                    results.push(result?);
+                }
+                results.into_iter().collect::<Result<()>>()?;
+            }
+            RegistryCommand::List => {
+                list_registries(&state).await?;
+            }
+        },
     }
 
     Ok(())
@@ -89,6 +112,32 @@ enum Command {
 
     /// List all installed packages
     List,
+
+    /// Manage registries
+    #[command(subcommand)]
+    Registry(RegistryCommand),
+}
+
+#[derive(Parser, Debug)]
+enum RegistryCommand {
+    /// Add one or more registries
+    #[command(arg_required_else_help = true)]
+    Add {
+        /// Registry to add
+        #[arg(required = true)]
+        uris: Vec<String>,
+    },
+
+    /// Remove one or more registries
+    #[command(arg_required_else_help = true)]
+    Remove {
+        /// Registry to add
+        #[arg(required = true)]
+        uris: Vec<String>,
+    },
+
+    /// List all registries
+    List,
 }
 
 /// Installs a package.
@@ -117,5 +166,43 @@ async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
         .context("failed to deregister installed package")?;
 
     println!("Uninstalled {pkg}");
+    Ok(())
+}
+
+/// Lists all installed packages.
+async fn list_packages(state: &State) -> Result<()> {
+    let packages = state.installed_packages().await?;
+
+    for pkg in packages {
+        println!("{}", pkg);
+    }
+
+    Ok(())
+}
+
+/// Adds a registry.
+async fn add_registry(state: &State, uri: &str) -> Result<()> {
+    state.add_registry(uri).await?;
+
+    println!("Added registry {}", uri);
+    Ok(())
+}
+
+/// Removes a registry.
+async fn remove_registry(state: &State, uri: &str) -> Result<()> {
+    state.remove_registry(uri).await?;
+
+    println!("Removed registry {}", uri);
+    Ok(())
+}
+
+/// Lists all registries.
+async fn list_registries(state: &State) -> Result<()> {
+    let registries = state.registries().await?;
+
+    for registry in registries {
+        println!("{}", registry);
+    }
+
     Ok(())
 }
