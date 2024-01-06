@@ -23,13 +23,15 @@ impl Package {
             false
         }
     }
-    /// Resolves this package to its latest installed version.
+
+    /// If the version isn't fully qualified, resolves it to the latest installed one.
     ///
     /// Returns an error if the package is either not installed,
     /// or if multiple versions of the package are installed.
-    pub async fn resolve_version(&mut self, state: &State) -> Result<()> {
+    pub async fn resolve_installed_version(&mut self, state: &State) -> Result<()> {
+        let installed_versions = state.installed_package_versions(self).await?;
+
         if !self.is_fully_qualified() {
-            let installed_versions = state.installed_package_versions(self).await?;
             if installed_versions.is_empty() {
                 return Err(anyhow!("package {} is not installed", self));
             }
@@ -42,7 +44,41 @@ impl Package {
             }
             self.version = Some(installed_versions.first().unwrap().clone());
         } else if !state.is_package_installed(self).await? {
-            return Err(anyhow!("package {} is not installed", self));
+            if installed_versions.is_empty() {
+                return Err(anyhow!("package {} is not installed", self));
+            } else {
+                return Err(anyhow!(
+                    "package {} is not installed, but these versions are: {}",
+                    self,
+                    installed_versions.join(", ")
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// If the version isn't fully qualified, resolves it to the latest known one.
+    ///
+    /// Returns an error if the package is not known.
+    /// If multiple versions of the package are known, the first (latest) one is used.
+    pub async fn resolve_known_version(&mut self, state: &State) -> Result<()> {
+        let known_versions = state.known_package_versions(self).await?;
+
+        if !self.is_fully_qualified() {
+            if known_versions.is_empty() {
+                return Err(anyhow!("package {} is not known", self));
+            }
+            self.version = Some(known_versions.first().unwrap().clone());
+        } else if !state.is_package_known(self).await? {
+            if known_versions.is_empty() {
+                return Err(anyhow!("package {} is not known", self));
+            } else {
+                return Err(anyhow!(
+                    "package {} is not known, but these versions are: {}",
+                    self,
+                    known_versions.join(", ")
+                ));
+            }
         }
         Ok(())
     }
@@ -89,6 +125,11 @@ impl From<crate::manifest::Package> for Package {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::{
+        manifest::Package as ManifestPackage,
+        registry::{MockFetcher, Registry},
+    };
 
     #[test]
     fn test_parse_package() {
@@ -158,7 +199,7 @@ mod tests {
             name: "foo".to_string(),
             version: None,
         };
-        pkg.resolve_version(&state).await.unwrap();
+        pkg.resolve_installed_version(&state).await.unwrap();
         assert_eq!(pkg.version, Some("1.0.0".to_string()));
     }
 
@@ -169,7 +210,7 @@ mod tests {
             name: "foo".to_string(),
             version: None,
         };
-        assert!(pkg.resolve_version(&state).await.is_err());
+        assert!(pkg.resolve_installed_version(&state).await.is_err());
     }
 
     #[tokio::test]
@@ -186,7 +227,7 @@ mod tests {
             name: "foo".to_string(),
             version: Some("2.0.0".to_string()),
         };
-        assert!(pkg.resolve_version(&state).await.is_err());
+        assert!(pkg.resolve_installed_version(&state).await.is_err());
     }
 
     #[tokio::test]
@@ -210,6 +251,58 @@ mod tests {
             name: "foo".to_string(),
             version: None,
         };
-        assert!(pkg.resolve_version(&state).await.is_err());
+        assert!(pkg.resolve_installed_version(&state).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_known_version() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await.unwrap();
+        state.add_registry(&registry).await.unwrap();
+        state
+            .add_known_packages(&[ManifestPackage {
+                name: "foo".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                homepage: None,
+                license: None,
+                registry: "test".to_string(),
+            }])
+            .await
+            .unwrap();
+        let mut pkg = Package {
+            name: "foo".to_string(),
+            version: None,
+        };
+        pkg.resolve_known_version(&state).await.unwrap();
+        assert_eq!(pkg.version, Some("1.0.0".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_known_version_fails_if_not_known() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut pkg = Package {
+            name: "foo".to_string(),
+            version: None,
+        };
+        assert!(pkg.resolve_known_version(&state).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_known_version_fails_if_this_version_is_not_known() {
+        let state = State::load(":memory:").await.unwrap();
+        state
+            .add_installed_package(&Package {
+                name: "foo".to_string(),
+                version: Some("1.0.0".to_string()),
+            })
+            .await
+            .unwrap();
+        let mut pkg = Package {
+            name: "foo".to_string(),
+            version: Some("2.0.0".to_string()),
+        };
+        assert!(pkg.resolve_known_version(&state).await.is_err());
     }
 }

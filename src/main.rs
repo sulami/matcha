@@ -176,7 +176,7 @@ async fn install_package(state: &State, pkg: &str) -> Result<()> {
 /// Uninstalls a package.
 async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
     let mut pkg: Package = pkg.parse().context("failed to parse package name")?;
-    pkg.resolve_version(state)
+    pkg.resolve_installed_version(state)
         .await
         .context("failed to resolve package version")?;
 
@@ -277,14 +277,24 @@ async fn search_packages(state: &State, query: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use crate::registry::MockFetcher;
 
-    use super::*;
+    /// Convenience function to setup the default test state.
+    async fn setup_state_with_registry() -> Result<State> {
+        let state = State::load(":memory:").await?;
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await?;
+        state.add_registry(&registry).await?;
+        ensure_registries_are_current(&state, &MockFetcher::default(), false).await?;
+        Ok(state)
+    }
 
     #[tokio::test]
     async fn test_install_package() {
-        let state = State::load(":memory:").await.unwrap();
-        let pkg = "foo@1.2.3";
+        let state = setup_state_with_registry().await.unwrap();
+        let pkg = "test-package@0.1.0";
 
         install_package(&state, pkg).await.unwrap();
         assert!(state
@@ -295,8 +305,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_install_package_refuses_if_package_is_already_installed() {
-        let state = State::load(":memory:").await.unwrap();
-        let pkg = "foo@1.2.3";
+        let state = setup_state_with_registry().await.unwrap();
+        let pkg = "test-package@0.1.0";
 
         install_package(&state, pkg).await.unwrap();
         let result = install_package(&state, pkg).await;
@@ -305,8 +315,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_uninstall_package() {
-        let state = State::load(":memory:").await.unwrap();
-        let pkg = "foo@1.2.3";
+        let state = setup_state_with_registry().await.unwrap();
+        let pkg = "test-package@0.1.0";
 
         install_package(&state, pkg).await.unwrap();
         uninstall_package(&state, pkg).await.unwrap();
@@ -318,8 +328,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_uninstall_package_refuses_if_package_is_not_installed() {
-        let state = State::load(":memory:").await.unwrap();
-        let pkg = "foo@1.2.3";
+        let state = setup_state_with_registry().await.unwrap();
+        let pkg = "test-package@0.1.0";
 
         let result = uninstall_package(&state, pkg).await;
         assert!(result.is_err());
@@ -327,8 +337,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_packages() {
-        let state = State::load(":memory:").await.unwrap();
-        let pkg = "foo@1.2.3";
+        let state = setup_state_with_registry().await.unwrap();
+        let pkg = "test-package@0.1.0";
 
         install_package(&state, pkg).await.unwrap();
         list_packages(&state).await.unwrap();
@@ -336,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_packages_empty() {
-        let state = State::load(":memory:").await.unwrap();
+        let state = setup_state_with_registry().await.unwrap();
         list_packages(&state).await.unwrap();
     }
 

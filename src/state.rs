@@ -265,14 +265,46 @@ impl State {
     /// Searches known packages for a query.
     pub async fn search_known_packages(&self, query: &str) -> Result<Vec<ManifestPackage>> {
         let query = format!("%{}%", query);
-        let pkgs = sqlx::query_as::<_, ManifestPackage>("SELECT name, version, description, homepage, license, registry FROM known_packages WHERE name LIKE ? OR description LIKE ? OR homepage LIKE ? ORDER BY name ASC, version DESC")
-            .bind(&query)
-            .bind(&query)
-            .bind(&query)
-            .fetch_all(&self.db)
-            .await
-            .context("failed to fetch known packages from database")?;
+        let pkgs = sqlx::query_as::<_, ManifestPackage>(
+            r"SELECT name, version, description, homepage, license, registry
+        FROM known_packages
+        WHERE name LIKE $1
+        OR description LIKE $1
+        OR homepage LIKE $1
+        ORDER BY name ASC, version DESC",
+        )
+        .bind(&query)
+        .fetch_all(&self.db)
+        .await
+        .context("failed to fetch known packages from database")?;
         Ok(pkgs)
+    }
+
+    /// Returns all versions versions of a package, ordered newest to oldest.
+    pub async fn known_package_versions(&self, pkg: &Package) -> Result<Vec<String>> {
+        let versions = sqlx::query_scalar(
+            "SELECT version FROM known_packages WHERE name = ? ORDER BY version DESC",
+        )
+        .bind(&pkg.name)
+        .fetch_all(&self.db)
+        .await
+        .context("failed to fetch known package versions from database")?;
+        Ok(versions)
+    }
+
+    /// Returns whether a package is known or not.
+    pub async fn is_package_known(&self, pkg: &Package) -> Result<bool> {
+        if pkg.is_fully_qualified() {
+            // Find this specific version.
+            Ok(self
+                .known_package_versions(pkg)
+                .await?
+                .iter()
+                .any(|v| v == pkg.version.as_ref().unwrap()))
+        } else {
+            // Find any version.
+            Ok(!self.known_package_versions(pkg).await?.is_empty())
+        }
     }
 }
 
