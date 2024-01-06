@@ -22,48 +22,47 @@ async fn main() -> Result<()> {
         .context("Failed to load internal state")?;
 
     match args.command {
-        Command::Install { pkgs } => {
-            ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
+        Command::Package(cmd) => match cmd {
+            PackageCommand::Install { pkgs } => {
+                ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
-            let mut set = JoinSet::new();
+                let mut set = JoinSet::new();
 
-            for pkg in pkgs {
-                let state = state.clone();
-                set.spawn(async move { install_package(&state, &pkg).await });
+                for pkg in pkgs {
+                    let state = state.clone();
+                    set.spawn(async move { install_package(&state, &pkg).await });
+                }
+
+                let mut results = vec![];
+                while let Some(result) = set.join_next().await {
+                    results.push(result?);
+                }
+                results.into_iter().collect::<Result<()>>()?;
             }
+            PackageCommand::Remove { pkgs } => {
+                let mut set = JoinSet::new();
 
-            let mut results = vec![];
-            while let Some(result) = set.join_next().await {
-                results.push(result?);
+                for pkg in pkgs {
+                    let state = state.clone();
+                    set.spawn(async move { uninstall_package(&state, &pkg).await });
+                }
+
+                let mut results = vec![];
+                while let Some(result) = set.join_next().await {
+                    results.push(result?);
+                }
+                results.into_iter().collect::<Result<()>>()?;
             }
-            results.into_iter().collect::<Result<()>>()?;
-        }
-        Command::Uninstall { pkgs } => {
-            let mut set = JoinSet::new();
+            PackageCommand::List => list_packages(&state).await?,
+            PackageCommand::Search {
+                query,
+                all_versions,
+            } => {
+                ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
-            for pkg in pkgs {
-                let state = state.clone();
-                set.spawn(async move { uninstall_package(&state, &pkg).await });
+                search_packages(&state, &query, all_versions).await?;
             }
-
-            let mut results = vec![];
-            while let Some(result) = set.join_next().await {
-                results.push(result?);
-            }
-            results.into_iter().collect::<Result<()>>()?;
-        }
-        Command::List => list_packages(&state).await?,
-        Command::Search {
-            query,
-            all_versions,
-        } => {
-            ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
-
-            search_packages(&state, &query, all_versions).await?;
-        }
-        Command::Fetch => {
-            ensure_registries_are_current(&state, &DefaultFetcher, true).await?;
-        }
+        },
         Command::Registry(cmd) => match cmd {
             RegistryCommand::Add { uri } => {
                 add_registry(&state, &uri, &DefaultFetcher).await?;
@@ -73,6 +72,9 @@ async fn main() -> Result<()> {
             }
             RegistryCommand::List => {
                 list_registries(&state).await?;
+            }
+            RegistryCommand::Fetch => {
+                ensure_registries_are_current(&state, &DefaultFetcher, true).await?;
             }
         },
     }
@@ -98,33 +100,39 @@ struct Cli {
 
 #[derive(Parser, Debug)]
 enum Command {
-    /// Install one or more packages
-    #[command(arg_required_else_help = true, alias = "i", alias = "add")]
+    /// Manage packages
+    #[command(subcommand, arg_required_else_help = true, alias = "pkg", alias = "p")]
+    Package(PackageCommand),
+
+    /// Manage registries
+    #[command(subcommand, arg_required_else_help = true, alias = "reg", alias = "r")]
+    Registry(RegistryCommand),
+}
+
+#[derive(Parser, Debug)]
+enum PackageCommand {
+    /// Install one or more packages (alias: i)
+    #[command(arg_required_else_help = true, alias = "i")]
     Install {
         /// Packages to install
         #[arg(required = true)]
         pkgs: Vec<String>,
     },
 
-    /// Uninstall one or more packages
-    #[command(
-        arg_required_else_help = true,
-        alias = "u",
-        alias = "remove",
-        alias = "rm"
-    )]
-    Uninstall {
+    /// Remove one or more packages (alias: rm)
+    #[command(arg_required_else_help = true, alias = "rm")]
+    Remove {
         /// Packages to uninstall
         #[arg(required = true)]
         pkgs: Vec<String>,
     },
 
-    /// List all installed packages
+    /// List all installed packages (alias: ls)
     #[command(alias = "ls")]
     List,
 
-    /// Search for a package
-    #[command(arg_required_else_help = true, alias = "s", alias = "find")]
+    /// Search for a package (alias: s)
+    #[command(arg_required_else_help = true, alias = "s")]
     Search {
         /// Search query
         query: String,
@@ -133,34 +141,30 @@ enum Command {
         #[arg(long)]
         all_versions: bool,
     },
-
-    /// Fetch all registries
-    Fetch,
-
-    /// Manage registries
-    #[command(subcommand, alias = "r", alias = "reg")]
-    Registry(RegistryCommand),
 }
 
 #[derive(Parser, Debug)]
 enum RegistryCommand {
-    /// Add a package registry
-    #[command(arg_required_else_help = true)]
+    /// Add a package registry (alias: a)
+    #[command(arg_required_else_help = true, alias = "a")]
     Add {
         /// Registry to add
         uri: String,
     },
 
-    /// Remove a package registry
+    /// Remove a package registry (alias: rm)
     #[command(arg_required_else_help = true, alias = "rm")]
     Remove {
         /// Registry to remove
         name: String,
     },
 
-    /// List all registries
+    /// List all registries (alias: ls)
     #[command(alias = "ls")]
     List,
+
+    /// Fetch all registries
+    Fetch,
 }
 
 /// Installs a package.
