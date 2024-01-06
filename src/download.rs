@@ -7,7 +7,7 @@ use tokio::sync::watch::Sender;
 ///
 /// Also accepts a progress channel, which will be sent the ratio of bytes
 /// downloaded to total bytes.
-pub async fn download_file(url: &str, progress: Sender<usize>) -> Result<Vec<u8>> {
+pub async fn download_file(url: &str, progress: Option<Sender<usize>>) -> Result<Vec<u8>> {
     let client = Client::new();
     let resp = client.get(url).send().await?;
 
@@ -20,7 +20,9 @@ pub async fn download_file(url: &str, progress: Sender<usize>) -> Result<Vec<u8>
         let chunk = chunk?;
         bytes.extend_from_slice(&chunk);
         downloaded += chunk.len();
-        progress.send(downloaded / content_length)?;
+        if let Some(tx) = &progress {
+            tx.send(downloaded / content_length)?;
+        }
     }
 
     Ok(bytes)

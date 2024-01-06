@@ -5,10 +5,12 @@ use tokio::task::JoinSet;
 pub(crate) mod download;
 pub(crate) mod manifest;
 pub(crate) mod package;
+pub(crate) mod progress;
 pub(crate) mod registry;
 pub(crate) mod state;
 
 use package::Package;
+use progress::create_progress_bar;
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 
@@ -217,6 +219,8 @@ async fn list_registries(state: &State) -> Result<()> {
 }
 
 /// Ensures all registries are up to date by potentially refetching them.
+///
+/// Supply `force` to force a refetch of all registries.
 async fn ensure_registries_are_current(
     state: &State,
     fetcher: &(impl Fetcher + 'static),
@@ -224,6 +228,7 @@ async fn ensure_registries_are_current(
 ) -> Result<()> {
     let registries = state.registries().await?;
 
+    let pb = create_progress_bar("Fetching registries", registries.len() as u64);
     let mut set = JoinSet::new();
 
     for mut registry in registries {
@@ -237,7 +242,9 @@ async fn ensure_registries_are_current(
     let mut results = vec![];
     while let Some(result) = set.join_next().await {
         results.push(result?);
+        pb.inc(1);
     }
+
     results
         .into_iter()
         .collect::<Result<()>>()

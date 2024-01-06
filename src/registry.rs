@@ -3,7 +3,6 @@ use std::{fmt::Display, future::Future, path::PathBuf, str::FromStr, time::Durat
 use anyhow::{Context, Result};
 use sqlx::{sqlite::SqliteRow, FromRow, Row};
 use time::OffsetDateTime;
-use tokio::sync::watch;
 
 use crate::{download::download_file, manifest::Manifest, state::State};
 
@@ -171,8 +170,7 @@ impl Fetcher for DefaultFetcher {
                 .await
                 .context("failed to read manifest at {path}")?,
             Uri::Http(uri) | Uri::Https(uri) => {
-                let (tx, _rx) = watch::channel(0);
-                let bytes = download_file(uri, tx)
+                let bytes = download_file(uri, None)
                     .await
                     .context("failed to fetch manifest from {uri}")?;
                 String::from_utf8(bytes).context("failed to parse downloaded manifest as utf-8")?

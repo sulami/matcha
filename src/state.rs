@@ -165,7 +165,10 @@ impl State {
             .registry_exists_by_name(reg.name.as_ref().unwrap())
             .await?
         {
-            return Err(anyhow!("registry {} already exists", &reg.uri));
+            return Err(anyhow!(
+                "registry {} already exists",
+                reg.name.as_ref().unwrap()
+            ));
         }
         sqlx::query("INSERT INTO registries (name, uri) VALUES (?, ?)")
             .bind(reg.name.as_ref().unwrap())
