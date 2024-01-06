@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
 
     match args.command {
         Command::Install { pkgs } => {
-            ensure_registries_are_current(&state, &DefaultFetcher).await?;
+            ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
             let mut set = JoinSet::new();
 
@@ -52,9 +52,12 @@ async fn main() -> Result<()> {
         }
         Command::List => list_packages(&state).await?,
         Command::Search { query } => {
-            ensure_registries_are_current(&state, &DefaultFetcher).await?;
+            ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
             search_packages(&state, &query).await?;
+        }
+        Command::Fetch => {
+            ensure_registries_are_current(&state, &DefaultFetcher, true).await?;
         }
         Command::Registry(cmd) => match cmd {
             RegistryCommand::Add { uri } => {
@@ -110,6 +113,9 @@ enum Command {
         /// Search query
         query: String,
     },
+
+    /// Fetch all registries
+    Fetch,
 
     /// Manage registries
     #[command(subcommand)]
@@ -214,13 +220,14 @@ async fn list_registries(state: &State) -> Result<()> {
 async fn ensure_registries_are_current(
     state: &State,
     fetcher: &(impl Fetcher + 'static),
+    force: bool,
 ) -> Result<()> {
     let registries = state.registries().await?;
 
     let mut set = JoinSet::new();
 
     for mut registry in registries {
-        if registry.should_update() {
+        if force || registry.should_update() {
             let state = state.clone();
             let fetcher = fetcher.clone();
             set.spawn(async move { registry.update(&state, &fetcher).await });
