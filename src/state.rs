@@ -12,7 +12,7 @@ use sqlx::{
 use time::OffsetDateTime;
 use tokio::fs::create_dir_all;
 
-use crate::{package::Package, registry::Registry};
+use crate::{manifest, package::Package, registry::Registry};
 
 /// The internal state of the application, backed by a SQLite database.
 #[derive(Clone)]
@@ -127,31 +127,6 @@ impl State {
         Ok(())
     }
 
-    /// Resolves a package to its latest installed version.
-    ///
-    /// Returns an error if the package is either not installed,
-    /// or if multiple versions of the package are installed.
-    pub async fn resolve_installed_package_version(&self, pkg: &mut Package) -> Result<()> {
-        if !pkg.is_fully_qualified() {
-            let installed_versions = self.installed_package_versions(pkg).await?;
-            if installed_versions.is_empty() {
-                return Err(anyhow!("package {} is not installed", pkg));
-            }
-            if installed_versions.len() > 1 {
-                return Err(anyhow!(
-                    "multiple versions of package {} are installed: {}",
-                    pkg.name,
-                    installed_versions.join(", ")
-                ));
-            }
-            pkg.version = Some(installed_versions.first().unwrap().clone());
-        } else if !self.is_package_installed(pkg).await? {
-            return Err(anyhow!("package {} is not installed", pkg));
-        }
-
-        Ok(())
-    }
-
     /// Returns whether a package is installed or not.
     ///
     /// If the package version is not specified, this will return `true`
@@ -171,7 +146,7 @@ impl State {
     }
 
     /// Returns all installed versions of a package, ordered newest to oldest.
-    async fn installed_package_versions(&self, pkg: &Package) -> Result<Vec<String>> {
+    pub async fn installed_package_versions(&self, pkg: &Package) -> Result<Vec<String>> {
         let versions = sqlx::query_scalar(
             "SELECT version FROM installed_packages WHERE name = ? ORDER BY version DESC",
         )
@@ -184,11 +159,17 @@ impl State {
 
     /// Adds a registry to the internal state.
     pub async fn add_registry(&self, reg: &Registry) -> Result<()> {
-        if self.registry_exists(&reg.name).await? {
+        if !reg.is_initialized() {
+            return Err(anyhow!("registry {} is not initialized", &reg.uri));
+        }
+        if self
+            .registry_exists_by_name(&reg.name.as_ref().unwrap())
+            .await?
+        {
             return Err(anyhow!("registry {} already exists", &reg.uri));
         }
         sqlx::query("INSERT INTO registries (name, uri) VALUES (?, ?)")
-            .bind(&reg.name)
+            .bind(&reg.name.as_ref().unwrap())
             .bind(reg.uri.to_string())
             .execute(&self.db)
             .await
@@ -198,7 +179,7 @@ impl State {
 
     /// Removes a registry from the internal state.
     pub async fn remove_registry(&self, name: &str) -> Result<()> {
-        if !self.registry_exists(name).await? {
+        if !self.registry_exists_by_name(name).await? {
             return Err(anyhow!("registry {} does not exist", name));
         }
         sqlx::query("DELETE FROM registries WHERE name = ?")
@@ -220,7 +201,7 @@ impl State {
     }
 
     /// Returns true if a registry with this name exists.
-    pub async fn registry_exists(&self, name: &str) -> Result<bool> {
+    pub async fn registry_exists_by_name(&self, name: &str) -> Result<bool> {
         let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE name = ?)")
             .bind(name)
             .fetch_one(&self.db)
@@ -229,32 +210,53 @@ impl State {
         Ok(exists)
     }
 
-    /// Updates the last_fetched field of a registry, both in the database and in the given
-    /// registry struct.
-    pub async fn update_registry_last_fetched(
-        &self,
-        reg: &mut Registry,
-        last_fetched: OffsetDateTime,
-    ) -> Result<()> {
-        if !self.registry_exists(&reg.name).await? {
-            return Err(anyhow!("registry {} does not exist", &reg.name));
+    /// Returns true if a registry with this URI exists.
+    pub async fn registry_exists_by_uri(&self, uri: &str) -> Result<bool> {
+        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE uri = ?)")
+            .bind(uri)
+            .fetch_one(&self.db)
+            .await
+            .context("failed to check if registry exists in database")?;
+        Ok(exists)
+    }
+
+    /// Updates the database record of a registry with a new name and last_fetched.
+    pub async fn update_registry(&self, reg: &Registry) -> Result<()> {
+        if !self.registry_exists_by_uri(&reg.uri.to_string()).await? {
+            return Err(anyhow!("registry {} does not exist", &reg.uri));
         }
-        sqlx::query("UPDATE registries SET last_fetched = ? WHERE name = ?")
-            .bind(last_fetched)
+        sqlx::query("UPDATE registries SET name = ?, last_fetched = ? WHERE uri = ?")
             .bind(&reg.name)
+            .bind(reg.last_fetched)
+            .bind(&reg.uri.to_string())
             .execute(&self.db)
             .await
             .context("failed to update registry last_fetched in database")?;
-        reg.last_fetched = Some(last_fetched);
+        Ok(())
+    }
+
+    pub async fn add_known_packages(&self, pkgs: &[manifest::Package]) -> Result<()> {
+        for pkg in pkgs {
+            sqlx::query("INSERT INTO known_packages (name, version, description, homepage, license, registry) VALUES (?, ?, ?, ?, ?, ?)")
+                .bind(&pkg.name)
+                .bind(&pkg.version)
+                .bind(&pkg.description)
+                .bind(&pkg.homepage)
+                .bind(&pkg.license)
+                .bind(&pkg.registry)
+                .execute(&self.db)
+                .await
+                .context("failed to insert known package into database")?;
+        }
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::registry::Registry;
-
     use super::*;
+
+    use crate::registry::MockFetcher;
 
     #[tokio::test]
     async fn test_package_add_list_remove() {
@@ -339,90 +341,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_installed_package_version() {
-        let state = State::load(":memory:").await.unwrap();
-        state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
-            .await
-            .unwrap();
-        let mut pkg = Package {
-            name: "foo".to_string(),
-            version: None,
-        };
-        state
-            .resolve_installed_package_version(&mut pkg)
-            .await
-            .unwrap();
-        assert_eq!(pkg.version, Some("1.0.0".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_resolve_installed_package_version_fails_if_not_installed() {
-        let state = State::load(":memory:").await.unwrap();
-        let mut pkg = Package {
-            name: "foo".to_string(),
-            version: None,
-        };
-        assert!(state
-            .resolve_installed_package_version(&mut pkg)
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_resolve_installed_package_version_fails_if_this_version_is_not_installed() {
-        let state = State::load(":memory:").await.unwrap();
-        state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
-            .await
-            .unwrap();
-        let mut pkg = Package {
-            name: "foo".to_string(),
-            version: Some("2.0.0".to_string()),
-        };
-        assert!(state
-            .resolve_installed_package_version(&mut pkg)
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_resolve_installed_package_version_fails_if_multiple_installed() {
-        let state = State::load(":memory:").await.unwrap();
-        state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
-            .await
-            .unwrap();
-        state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("2.0.0".to_string()),
-            })
-            .await
-            .unwrap();
-        let mut pkg = Package {
-            name: "foo".to_string(),
-            version: None,
-        };
-        assert!(state
-            .resolve_installed_package_version(&mut pkg)
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
     async fn test_registry_add_list_remove() {
         let state = State::load(":memory:").await.unwrap();
-        let registry = Registry::new("foo", "https://example.invalid/registry");
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await.unwrap();
         state.add_registry(&registry).await.unwrap();
         let registries = state.registries().await.unwrap();
         assert_eq!(registries.len(), 1);
@@ -430,7 +352,7 @@ mod tests {
             registries[0].uri.to_string(),
             "https://example.invalid/registry"
         );
-        state.remove_registry("foo").await.unwrap();
+        state.remove_registry("test").await.unwrap();
         let registries = state.registries().await.unwrap();
         assert!(registries.is_empty());
     }
@@ -438,7 +360,8 @@ mod tests {
     #[tokio::test]
     async fn test_add_registry_refuses_same_name_twice() {
         let state = State::load(":memory:").await.unwrap();
-        let registry = Registry::new("foo", "https://example.invalid/registry");
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await.unwrap();
         state.add_registry(&registry).await.unwrap();
         assert!(state.add_registry(&registry).await.is_err());
     }
@@ -446,36 +369,36 @@ mod tests {
     #[tokio::test]
     async fn test_remove_registry_refuses_nonexistent_name() {
         let state = State::load(":memory:").await.unwrap();
-        assert!(state.remove_registry("foo").await.is_err());
+        assert!(state.remove_registry("test").await.is_err());
     }
 
     #[tokio::test]
     async fn test_registry_exists() {
         let state = State::load(":memory:").await.unwrap();
-        assert!(!state.registry_exists("foo").await.unwrap());
-        state
-            .add_registry(&Registry::new("foo", "https://example.invalid/registry"))
-            .await
-            .unwrap();
-        assert!(state.registry_exists("foo").await.unwrap());
+        assert!(!state.registry_exists_by_name("test").await.unwrap());
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await.unwrap();
+        state.add_registry(&registry).await.unwrap();
+        assert!(state.registry_exists_by_name("test").await.unwrap());
     }
 
     #[tokio::test]
-    async fn test_update_registry_last_fetched() {
+    async fn test_update_registry() {
         let state = State::load(":memory:").await.unwrap();
-        let mut registry = Registry::new("foo", "https://example.invalid/registry");
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await.unwrap();
         state.add_registry(&registry).await.unwrap();
 
+        let new_name = "foo".to_string();
         let last_fetched = OffsetDateTime::now_utc();
-        state
-            .update_registry_last_fetched(&mut registry, last_fetched)
-            .await
-            .unwrap();
 
-        assert_eq!(registry.last_fetched, Some(last_fetched));
+        registry.name = Some(new_name.clone());
+        registry.last_fetched = Some(last_fetched);
+        state.update_registry(&registry).await.unwrap();
 
         let registries = state.registries().await.unwrap();
         assert_eq!(registries.len(), 1);
+        assert_eq!(registries[0].name, Some(new_name));
         assert_eq!(registries[0].last_fetched, Some(last_fetched));
     }
 }

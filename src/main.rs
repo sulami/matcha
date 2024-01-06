@@ -9,7 +9,7 @@ pub(crate) mod registry;
 pub(crate) mod state;
 
 use package::Package;
-use registry::Registry;
+use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 
 #[tokio::main]
@@ -49,9 +49,12 @@ async fn main() -> Result<()> {
             results.into_iter().collect::<Result<()>>()?;
         }
         Command::List => list_packages(&state).await?,
+        Command::Search { .. } => {
+            ensure_registries_are_current(&state, &DefaultFetcher).await?;
+        }
         Command::Registry(cmd) => match cmd {
-            RegistryCommand::Add { name, uri } => {
-                add_registry(&state, &name, &uri).await?;
+            RegistryCommand::Add { uri } => {
+                add_registry(&state, &uri, &DefaultFetcher).await?;
             }
             RegistryCommand::Remove { name } => {
                 remove_registry(&state, &name).await?;
@@ -97,6 +100,13 @@ enum Command {
     /// List all installed packages
     List,
 
+    /// Search for a package
+    #[command(arg_required_else_help = true)]
+    Search {
+        /// Search query
+        query: String,
+    },
+
     /// Manage registries
     #[command(subcommand)]
     Registry(RegistryCommand),
@@ -104,16 +114,14 @@ enum Command {
 
 #[derive(Parser, Debug)]
 enum RegistryCommand {
-    /// Add one or more registries
+    /// Add a package registry
     #[command(arg_required_else_help = true)]
     Add {
-        /// Name of the registry
-        name: String,
         /// Registry to add
         uri: String,
     },
 
-    /// Remove one or more registries
+    /// Remove a package registry
     #[command(arg_required_else_help = true)]
     Remove {
         /// Registry to remove
@@ -145,8 +153,9 @@ async fn install_package(state: &State, pkg: &str) -> Result<()> {
 /// Uninstalls a package.
 async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
     let mut pkg: Package = pkg.parse().context("failed to parse package name")?;
-
-    state.resolve_installed_package_version(&mut pkg).await?;
+    pkg.resolve_version(state)
+        .await
+        .context("failed to resolve package version")?;
 
     state
         .remove_installed_package(&pkg)
@@ -169,8 +178,9 @@ async fn list_packages(state: &State) -> Result<()> {
 }
 
 /// Adds a registry.
-async fn add_registry(state: &State, name: &str, uri: &str) -> Result<()> {
-    let registry = Registry::new(name, uri);
+async fn add_registry(state: &State, uri: &str, fetcher: &impl Fetcher) -> Result<()> {
+    let mut registry = Registry::new(uri);
+    registry.initialize(fetcher).await?;
     state.add_registry(&registry).await?;
 
     println!("Added registry {}", registry);
@@ -196,8 +206,36 @@ async fn list_registries(state: &State) -> Result<()> {
     Ok(())
 }
 
+/// Ensures all registries are up to date by potentially refetching them.
+async fn ensure_registries_are_current(state: &State, fetcher: &impl Fetcher) -> Result<()> {
+    let registries = state.registries().await?;
+
+    let mut set = JoinSet::new();
+
+    for mut registry in registries {
+        if registry.should_update() {
+            let state = state.clone();
+            let fetcher = fetcher.clone();
+            set.spawn(async move { registry.update(&state, &DefaultFetcher).await });
+        }
+    }
+
+    let mut results = vec![];
+    while let Some(result) = set.join_next().await {
+        results.push(result?);
+    }
+    results
+        .into_iter()
+        .collect::<Result<()>>()
+        .context("failed to update registries")?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::registry::MockFetcher;
+
     use super::*;
 
     #[tokio::test]
@@ -264,7 +302,9 @@ mod tests {
         let state = State::load(":memory:").await.unwrap();
         let uri = "https://example.invalid";
 
-        add_registry(&state, "foo", uri).await.unwrap();
+        add_registry(&state, uri, &MockFetcher::default())
+            .await
+            .unwrap();
         assert!(state
             .registries()
             .await
@@ -278,8 +318,10 @@ mod tests {
         let state = State::load(":memory:").await.unwrap();
         let uri = "https://example.invalid";
 
-        add_registry(&state, "foo", uri).await.unwrap();
-        let result = add_registry(&state, "foo", uri).await;
+        add_registry(&state, uri, &MockFetcher::default())
+            .await
+            .unwrap();
+        let result = add_registry(&state, uri, &MockFetcher::default()).await;
         assert!(result.is_err());
     }
 
@@ -287,11 +329,11 @@ mod tests {
     async fn test_remove_registry() {
         let state = State::load(":memory:").await.unwrap();
 
-        add_registry(&state, "foo", "https://example.invalid")
+        add_registry(&state, "https://example.invalid", &MockFetcher::default())
             .await
             .unwrap();
-        remove_registry(&state, "foo").await.unwrap();
-        assert!(!state.registry_exists("foo").await.unwrap());
+        remove_registry(&state, "test").await.unwrap();
+        assert!(!state.registry_exists_by_name("test").await.unwrap());
     }
 
     #[tokio::test]

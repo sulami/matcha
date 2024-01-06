@@ -13,8 +13,6 @@ pub struct Manifest {
     pub name: String,
     /// The URI of the manifest.
     pub uri: String,
-    /// The version of the manifest.
-    pub version: String,
     /// The description of the manifest.
     pub description: Option<String>,
     /// Packages in this manifest.
@@ -57,7 +55,6 @@ impl<'de> Deserialize<'de> for Manifest {
             schema_version: u32,
             name: String,
             uri: String,
-            version: String,
             description: Option<String>,
             packages: Vec<TempPackage>,
         }
@@ -81,7 +78,6 @@ impl<'de> Deserialize<'de> for Manifest {
             schema_version: temp_manifest.schema_version,
             name: temp_manifest.name,
             uri: temp_manifest.uri,
-            version: temp_manifest.version,
             description: temp_manifest.description,
             packages,
         })
@@ -106,7 +102,6 @@ mod tests {
             schema_version = 1
             name = "test"
             uri = "https://example.invalid/test"
-            version = "0.1.0"
             description = "A test manifest"
 
             [[packages]]
@@ -121,7 +116,6 @@ mod tests {
         assert_eq!(manifest.schema_version, 1);
         assert_eq!(manifest.name, "test");
         assert_eq!(manifest.uri, "https://example.invalid/test");
-        assert_eq!(manifest.version, "0.1.0");
         assert_eq!(manifest.description, Some("A test manifest".to_string()));
         assert_eq!(manifest.packages.len(), 1);
         assert_eq!(manifest.packages[0].name, "test-package");

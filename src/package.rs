@@ -1,6 +1,8 @@
 use std::{fmt::Display, str::FromStr};
 
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, Error, Result};
+
+use crate::state::State;
 
 /// A package.
 #[derive(Clone, Debug, sqlx::FromRow)]
@@ -20,6 +22,29 @@ impl Package {
         } else {
             false
         }
+    }
+    /// Resolves this package to its latest installed version.
+    ///
+    /// Returns an error if the package is either not installed,
+    /// or if multiple versions of the package are installed.
+    pub async fn resolve_version(&mut self, state: &State) -> Result<()> {
+        if !self.is_fully_qualified() {
+            let installed_versions = state.installed_package_versions(self).await?;
+            if installed_versions.is_empty() {
+                return Err(anyhow!("package {} is not installed", self));
+            }
+            if installed_versions.len() > 1 {
+                return Err(anyhow!(
+                    "multiple versions of package {} are installed: {}",
+                    self.name,
+                    installed_versions.join(", ")
+                ));
+            }
+            self.version = Some(installed_versions.first().unwrap().clone());
+        } else if !state.is_package_installed(self).await? {
+            return Err(anyhow!("package {} is not installed", self));
+        }
+        Ok(())
     }
 }
 
@@ -117,5 +142,74 @@ mod tests {
         .into();
         assert_eq!(pkg.name, "foo");
         assert_eq!(pkg.version, Some("1.2.3".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_version() {
+        let state = State::load(":memory:").await.unwrap();
+        state
+            .add_installed_package(&Package {
+                name: "foo".to_string(),
+                version: Some("1.0.0".to_string()),
+            })
+            .await
+            .unwrap();
+        let mut pkg = Package {
+            name: "foo".to_string(),
+            version: None,
+        };
+        pkg.resolve_version(&state).await.unwrap();
+        assert_eq!(pkg.version, Some("1.0.0".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_version_fails_if_not_installed() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut pkg = Package {
+            name: "foo".to_string(),
+            version: None,
+        };
+        assert!(pkg.resolve_version(&state).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_version_fails_if_this_version_is_not_installed() {
+        let state = State::load(":memory:").await.unwrap();
+        state
+            .add_installed_package(&Package {
+                name: "foo".to_string(),
+                version: Some("1.0.0".to_string()),
+            })
+            .await
+            .unwrap();
+        let mut pkg = Package {
+            name: "foo".to_string(),
+            version: Some("2.0.0".to_string()),
+        };
+        assert!(pkg.resolve_version(&state).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_installed_package_version_fails_if_multiple_installed() {
+        let state = State::load(":memory:").await.unwrap();
+        state
+            .add_installed_package(&Package {
+                name: "foo".to_string(),
+                version: Some("1.0.0".to_string()),
+            })
+            .await
+            .unwrap();
+        state
+            .add_installed_package(&Package {
+                name: "foo".to_string(),
+                version: Some("2.0.0".to_string()),
+            })
+            .await
+            .unwrap();
+        let mut pkg = Package {
+            name: "foo".to_string(),
+            version: None,
+        };
+        assert!(pkg.resolve_version(&state).await.is_err());
     }
 }
