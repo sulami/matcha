@@ -5,14 +5,14 @@ use tokio::task::JoinSet;
 pub(crate) mod download;
 pub(crate) mod manifest;
 pub(crate) mod package;
-pub(crate) mod progress;
 pub(crate) mod registry;
 pub(crate) mod state;
+pub(crate) mod ui;
 
 use package::Package;
-use progress::create_progress_bar;
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
+use ui::create_progress_bar;
 
 #[tokio::main]
 async fn main() -> Result<()> {

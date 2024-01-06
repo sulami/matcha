@@ -1,8 +1,4 @@
-use std::{
-    io::{stderr, Write},
-    path::Path,
-    str::FromStr,
-};
+use std::{path::Path, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
 use sqlx::{
@@ -55,11 +51,7 @@ impl State {
 
     /// Initializes the internal state database at the given path.
     async fn init(path: &str) -> Result<SqlitePool> {
-        writeln!(
-            stderr(),
-            "No state database found, creating a new one at {}",
-            path
-        )?;
+        eprintln!("No state database found, creating a new one at {}", path);
 
         // Create the directory if it doesn't exist.
         let dir = Path::new(path).parent().unwrap();
