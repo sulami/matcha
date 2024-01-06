@@ -21,6 +21,8 @@ async fn main() -> Result<()> {
 
     match args.command {
         Command::Install { pkgs } => {
+            ensure_registries_are_current(&state, &DefaultFetcher).await?;
+
             let mut set = JoinSet::new();
 
             for pkg in pkgs {
@@ -49,8 +51,10 @@ async fn main() -> Result<()> {
             results.into_iter().collect::<Result<()>>()?;
         }
         Command::List => list_packages(&state).await?,
-        Command::Search { .. } => {
+        Command::Search { query } => {
             ensure_registries_are_current(&state, &DefaultFetcher).await?;
+
+            search_packages(&state, &query).await?;
         }
         Command::Registry(cmd) => match cmd {
             RegistryCommand::Add { uri } => {
@@ -231,6 +235,17 @@ async fn ensure_registries_are_current(
         .into_iter()
         .collect::<Result<()>>()
         .context("failed to update registries")?;
+
+    Ok(())
+}
+
+/// Searches for a package.
+async fn search_packages(state: &State, query: &str) -> Result<()> {
+    let packages = state.search_known_packages(query).await?;
+
+    for pkg in packages {
+        println!("{}", pkg);
+    }
 
     Ok(())
 }

@@ -9,10 +9,9 @@ use sqlx::{
     migrate,
     sqlite::{SqliteConnectOptions, SqlitePool},
 };
-use time::OffsetDateTime;
 use tokio::fs::create_dir_all;
 
-use crate::{manifest, package::Package, registry::Registry};
+use crate::{manifest::Package as ManifestPackage, package::Package, registry::Registry};
 
 /// The internal state of the application, backed by a SQLite database.
 #[derive(Clone)]
@@ -163,13 +162,13 @@ impl State {
             return Err(anyhow!("registry {} is not initialized", &reg.uri));
         }
         if self
-            .registry_exists_by_name(&reg.name.as_ref().unwrap())
+            .registry_exists_by_name(reg.name.as_ref().unwrap())
             .await?
         {
             return Err(anyhow!("registry {} already exists", &reg.uri));
         }
         sqlx::query("INSERT INTO registries (name, uri) VALUES (?, ?)")
-            .bind(&reg.name.as_ref().unwrap())
+            .bind(reg.name.as_ref().unwrap())
             .bind(reg.uri.to_string())
             .execute(&self.db)
             .await
@@ -235,9 +234,10 @@ impl State {
         Ok(())
     }
 
-    pub async fn add_known_packages(&self, pkgs: &[manifest::Package]) -> Result<()> {
+    /// Adds known packages to the database.
+    pub async fn add_known_packages(&self, pkgs: &[ManifestPackage]) -> Result<()> {
         for pkg in pkgs {
-            sqlx::query("INSERT INTO known_packages (name, version, description, homepage, license, registry) VALUES (?, ?, ?, ?, ?, ?)")
+            sqlx::query("INSERT INTO known_packages (name, version, description, homepage, license, registry) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
                 .bind(&pkg.name)
                 .bind(&pkg.version)
                 .bind(&pkg.description)
@@ -250,11 +250,26 @@ impl State {
         }
         Ok(())
     }
+
+    /// Searches known packages for a query.
+    pub async fn search_known_packages(&self, query: &str) -> Result<Vec<ManifestPackage>> {
+        let query = format!("%{}%", query);
+        let pkgs = sqlx::query_as::<_, ManifestPackage>("SELECT name, version, description, homepage, license, registry FROM known_packages WHERE name LIKE ? OR description LIKE ? OR homepage LIKE ? ORDER BY name ASC, version DESC")
+            .bind(&query)
+            .bind(&query)
+            .bind(&query)
+            .fetch_all(&self.db)
+            .await
+            .context("failed to fetch known packages from database")?;
+        Ok(pkgs)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use time::OffsetDateTime;
 
     use crate::registry::MockFetcher;
 
@@ -400,5 +415,52 @@ mod tests {
         assert_eq!(registries.len(), 1);
         assert_eq!(registries[0].name, Some(new_name));
         assert_eq!(registries[0].last_fetched, Some(last_fetched));
+    }
+
+    #[tokio::test]
+    async fn test_search_known_packages() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await.unwrap();
+        state.add_registry(&registry).await.unwrap();
+
+        let pkgs = vec![
+            ManifestPackage {
+                name: "foo".to_string(),
+                version: "1.0.0".to_string(),
+                description: Some("A test package".to_string()),
+                homepage: Some("https://example.invalid/foo".to_string()),
+                license: Some("MIT".to_string()),
+                registry: "test".to_string(),
+            },
+            ManifestPackage {
+                name: "bar".to_string(),
+                version: "1.0.0".to_string(),
+                description: Some("A test package".to_string()),
+                homepage: Some("https://example.invalid/bar".to_string()),
+                license: Some("MIT".to_string()),
+                registry: "test".to_string(),
+            },
+            ManifestPackage {
+                name: "baz".to_string(),
+                version: "1.0.0".to_string(),
+                description: Some("A test package".to_string()),
+                homepage: Some("https://example.invalid/baz".to_string()),
+                license: Some("MIT".to_string()),
+                registry: "test".to_string(),
+            },
+        ];
+        state.add_known_packages(&pkgs).await.unwrap();
+        let results = state.search_known_packages("foo").await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "foo");
+        assert_eq!(results[0].version, "1.0.0");
+        assert_eq!(results[0].description, Some("A test package".to_string()));
+        assert_eq!(
+            results[0].homepage,
+            Some("https://example.invalid/foo".to_string())
+        );
+        assert_eq!(results[0].license, Some("MIT".to_string()));
+        assert_eq!(results[0].registry, "test");
     }
 }

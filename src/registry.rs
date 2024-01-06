@@ -1,16 +1,11 @@
-use std::fmt::Display;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::time::Duration;
+use std::{fmt::Display, future::Future, path::PathBuf, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result};
 use sqlx::{sqlite::SqliteRow, FromRow, Row};
 use time::OffsetDateTime;
 use tokio::sync::watch;
 
-use crate::download::download_file;
-use crate::manifest::Manifest;
-use crate::state::State;
+use crate::{download::download_file, manifest::Manifest, state::State};
 
 /// How often to update registries.
 const UPDATE_AFTER: Duration = Duration::from_secs(60 * 24);
@@ -162,7 +157,7 @@ impl FromStr for Uri {
 /// This trait exists so that we can mock out fetching for tests.
 pub trait Fetcher: Send + Sync + Clone {
     /// Fetches the manifest string from the registry.
-    fn fetch(&self, reg: &Registry) -> impl std::future::Future<Output = Result<String>> + Send;
+    fn fetch(&self, reg: &Registry) -> impl Future<Output = Result<String>> + Send;
 }
 
 /// The default fetcher, which fetches from the filesystem or HTTP.

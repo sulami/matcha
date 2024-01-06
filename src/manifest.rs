@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{fmt::Display, str::FromStr};
 
 use anyhow::Error;
 use serde::{Deserialize, Deserializer};
@@ -89,6 +89,22 @@ impl FromStr for Manifest {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(toml::from_str(s)?)
+    }
+}
+
+impl Display for Package {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.version)?;
+        if let Some(desc) = &self.description {
+            write!(f, " - {}", desc)?;
+        }
+        if let Some(url) = &self.homepage {
+            write!(f, " ({})", url)?;
+        }
+        if let Some(license) = &self.license {
+            write!(f, " [{}]", license)?;
+        }
+        Ok(())
     }
 }
 
