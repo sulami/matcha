@@ -267,11 +267,36 @@ impl State {
         let query = format!("%{}%", query);
         let pkgs = sqlx::query_as::<_, ManifestPackage>(
             r"SELECT name, version, description, homepage, license, registry
-        FROM known_packages
-        WHERE name LIKE $1
-        OR description LIKE $1
-        OR homepage LIKE $1
-        ORDER BY name ASC, version DESC",
+                FROM known_packages
+                WHERE name LIKE $1
+                OR description LIKE $1
+                OR homepage LIKE $1
+                ORDER BY name ASC, version DESC",
+        )
+        .bind(&query)
+        .fetch_all(&self.db)
+        .await
+        .context("failed to fetch known packages from database")?;
+        Ok(pkgs)
+    }
+
+    /// Searches know packages for a query, returning only the latest version of each package.
+    pub async fn search_known_packages_latest_only(
+        &self,
+        query: &str,
+    ) -> Result<Vec<ManifestPackage>> {
+        let query = format!("%{}%", query);
+        let pkgs = sqlx::query_as::<_, ManifestPackage>(
+            r"SELECT name, version, description, homepage, license, registry
+            FROM (
+                SELECT name, version, description, homepage, license, registry
+                FROM known_packages
+                WHERE name LIKE $1
+                OR description LIKE $1
+                OR homepage LIKE $1
+                ORDER BY name ASC, version DESC
+            )
+            GROUP BY name",
         )
         .bind(&query)
         .fetch_all(&self.db)
@@ -498,6 +523,53 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "foo");
         assert_eq!(results[0].version, "1.0.0");
+        assert_eq!(results[0].description, Some("A test package".to_string()));
+        assert_eq!(
+            results[0].homepage,
+            Some("https://example.invalid/foo".to_string())
+        );
+        assert_eq!(results[0].license, Some("MIT".to_string()));
+        assert_eq!(results[0].registry, "test");
+    }
+
+    #[tokio::test]
+    async fn test_search_known_packages_latest_only() {
+        let state = setup_state_with_registry().await.unwrap();
+
+        let pkgs = vec![
+            ManifestPackage {
+                name: "foo".to_string(),
+                version: "1.0.0".to_string(),
+                description: Some("A test package".to_string()),
+                homepage: Some("https://example.invalid/foo".to_string()),
+                license: Some("MIT".to_string()),
+                registry: "test".to_string(),
+            },
+            ManifestPackage {
+                name: "bar".to_string(),
+                version: "1.0.0".to_string(),
+                description: Some("A test package".to_string()),
+                homepage: Some("https://example.invalid/bar".to_string()),
+                license: Some("MIT".to_string()),
+                registry: "test".to_string(),
+            },
+            ManifestPackage {
+                name: "foo".to_string(),
+                version: "1.0.1".to_string(),
+                description: Some("A test package".to_string()),
+                homepage: Some("https://example.invalid/foo".to_string()),
+                license: Some("MIT".to_string()),
+                registry: "test".to_string(),
+            },
+        ];
+        state.add_known_packages(&pkgs).await.unwrap();
+        let results = state
+            .search_known_packages_latest_only("foo")
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "foo");
+        assert_eq!(results[0].version, "1.0.1");
         assert_eq!(results[0].description, Some("A test package".to_string()));
         assert_eq!(
             results[0].homepage,

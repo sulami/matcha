@@ -53,10 +53,13 @@ async fn main() -> Result<()> {
             results.into_iter().collect::<Result<()>>()?;
         }
         Command::List => list_packages(&state).await?,
-        Command::Search { query } => {
+        Command::Search {
+            query,
+            all_versions,
+        } => {
             ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
-            search_packages(&state, &query).await?;
+            search_packages(&state, &query, all_versions).await?;
         }
         Command::Fetch => {
             ensure_registries_are_current(&state, &DefaultFetcher, true).await?;
@@ -120,6 +123,10 @@ enum Command {
     Search {
         /// Search query
         query: String,
+
+        /// Return all versions instead of just the latest
+        #[arg(long)]
+        all_versions: bool,
     },
 
     /// Fetch all registries
@@ -265,8 +272,12 @@ async fn ensure_registries_are_current(
 }
 
 /// Searches for a package.
-async fn search_packages(state: &State, query: &str) -> Result<()> {
-    let packages = state.search_known_packages(query).await?;
+async fn search_packages(state: &State, query: &str, all_versions: bool) -> Result<()> {
+    let packages = if all_versions {
+        state.search_known_packages(query).await?
+    } else {
+        state.search_known_packages_latest_only(query).await?
+    };
 
     for pkg in packages {
         println!("{}", pkg);
