@@ -1,6 +1,7 @@
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use sqlx::{sqlite::SqliteRow, FromRow, Row};
@@ -9,6 +10,9 @@ use tokio::sync::watch;
 
 use crate::download::download_file;
 use crate::manifest::Manifest;
+
+/// How often to refetch registries.
+const REFETCH_AFTER: Duration = Duration::from_secs(60 * 24);
 
 /// A registry is a place that has manifests.
 #[derive(Debug)]
@@ -22,7 +26,7 @@ pub struct Registry {
 }
 
 /// A registry URI.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Uri {
     /// A local file path.
     File(PathBuf),
@@ -57,8 +61,18 @@ impl Registry {
             }
         };
         let manifest = s.parse().context("failed to parse manifest")?;
-        self.last_fetched = Some(OffsetDateTime::now_local()?);
+        self.last_fetched = Some(OffsetDateTime::now_utc());
         Ok(manifest)
+    }
+
+    /// Returns if the registry should be fetched.
+    pub fn should_fetch(&self) -> bool {
+        let now = OffsetDateTime::now_utc();
+        let Some(last_fetched) = self.last_fetched else {
+            return true;
+        };
+        let elapsed = now - last_fetched;
+        elapsed >= REFETCH_AFTER
     }
 }
 
@@ -103,5 +117,34 @@ impl FromStr for Uri {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from(s))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_uri_from_str() {
+        assert_eq!(
+            Uri::from_str("http://example.invalid").unwrap(),
+            Uri::Http("http://example.invalid".into())
+        );
+        assert_eq!(
+            Uri::from_str("https://example.invalid").unwrap(),
+            Uri::Https("https://example.invalid".into())
+        );
+        assert_eq!(
+            Uri::from_str("example").unwrap(),
+            Uri::File("example".into())
+        );
+    }
+
+    #[test]
+    fn test_should_refetch() {
+        let mut registry = Registry::new("test", "file:///example.invalid");
+        assert!(registry.should_fetch());
+        registry.last_fetched = Some(OffsetDateTime::now_utc());
+        assert!(!registry.should_fetch());
     }
 }
