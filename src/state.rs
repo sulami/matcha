@@ -281,6 +281,15 @@ mod tests {
 
     use crate::registry::MockFetcher;
 
+    /// Convenience function to setup the default test state.
+    async fn setup_state_with_registry() -> Result<State> {
+        let state = State::load(":memory:").await?;
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await?;
+        state.add_registry(&registry).await?;
+        Ok(state)
+    }
+
     #[tokio::test]
     async fn test_package_add_list_remove() {
         let state = State::load(":memory:").await.unwrap();
@@ -365,10 +374,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry_add_list_remove() {
-        let state = State::load(":memory:").await.unwrap();
-        let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await.unwrap();
-        state.add_registry(&registry).await.unwrap();
+        let state = setup_state_with_registry().await.unwrap();
+
         let registries = state.registries().await.unwrap();
         assert_eq!(registries.len(), 1);
         assert_eq!(
@@ -397,11 +404,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry_exists() {
-        let state = State::load(":memory:").await.unwrap();
-        assert!(!state.registry_exists_by_name("test").await.unwrap());
-        let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await.unwrap();
-        state.add_registry(&registry).await.unwrap();
+        let state = setup_state_with_registry().await.unwrap();
         assert!(state.registry_exists_by_name("test").await.unwrap());
     }
 
@@ -427,10 +430,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_known_packages() {
-        let state = State::load(":memory:").await.unwrap();
-        let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await.unwrap();
-        state.add_registry(&registry).await.unwrap();
+        let state = setup_state_with_registry().await.unwrap();
 
         let pkgs = vec![
             ManifestPackage {
@@ -474,10 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_known_packages_updates_existing() {
-        let state = State::load(":memory:").await.unwrap();
-        let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await.unwrap();
-        state.add_registry(&registry).await.unwrap();
+        let state = setup_state_with_registry().await.unwrap();
 
         let pkgs = vec![ManifestPackage {
             name: "test-package".to_string(),
