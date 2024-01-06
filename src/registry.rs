@@ -96,7 +96,18 @@ impl FromRow<'_, SqliteRow> for Registry {
     fn from_row(row: &SqliteRow) -> Result<Self, sqlx::Error> {
         let name: String = row.try_get("name")?;
         let uri: String = row.try_get("uri")?;
-        Ok(Self::new(&name, &uri))
+        let last_fetched: Option<OffsetDateTime> = row.try_get("last_fetched")?;
+        Ok(Self {
+            name,
+            uri: uri.into(),
+            last_fetched,
+        })
+    }
+}
+
+impl From<String> for Uri {
+    fn from(s: String) -> Self {
+        s.as_str().into()
     }
 }
 

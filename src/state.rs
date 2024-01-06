@@ -9,6 +9,7 @@ use sqlx::{
     migrate,
     sqlite::{SqliteConnectOptions, SqlitePool},
 };
+use time::OffsetDateTime;
 use tokio::fs::create_dir_all;
 
 use crate::{package::Package, registry::Registry};
@@ -227,6 +228,26 @@ impl State {
             .context("failed to check if registry exists in database")?;
         Ok(exists)
     }
+
+    /// Updates the last_fetched field of a registry, both in the database and in the given
+    /// registry struct.
+    pub async fn update_registry_last_fetched(
+        &self,
+        reg: &mut Registry,
+        last_fetched: OffsetDateTime,
+    ) -> Result<()> {
+        if !self.registry_exists(&reg.name).await? {
+            return Err(anyhow!("registry {} does not exist", &reg.name));
+        }
+        sqlx::query("UPDATE registries SET last_fetched = ? WHERE name = ?")
+            .bind(last_fetched)
+            .bind(&reg.name)
+            .execute(&self.db)
+            .await
+            .context("failed to update registry last_fetched in database")?;
+        reg.last_fetched = Some(last_fetched);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -437,5 +458,24 @@ mod tests {
             .await
             .unwrap();
         assert!(state.registry_exists("foo").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_update_registry_last_fetched() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut registry = Registry::new("foo", "https://example.invalid/registry");
+        state.add_registry(&registry).await.unwrap();
+
+        let last_fetched = OffsetDateTime::now_utc();
+        state
+            .update_registry_last_fetched(&mut registry, last_fetched)
+            .await
+            .unwrap();
+
+        assert_eq!(registry.last_fetched, Some(last_fetched));
+
+        let registries = state.registries().await.unwrap();
+        assert_eq!(registries.len(), 1);
+        assert_eq!(registries[0].last_fetched, Some(last_fetched));
     }
 }
