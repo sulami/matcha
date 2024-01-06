@@ -237,16 +237,24 @@ impl State {
     /// Adds known packages to the database.
     pub async fn add_known_packages(&self, pkgs: &[ManifestPackage]) -> Result<()> {
         for pkg in pkgs {
-            sqlx::query("INSERT INTO known_packages (name, version, description, homepage, license, registry) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING")
-                .bind(&pkg.name)
-                .bind(&pkg.version)
-                .bind(&pkg.description)
-                .bind(&pkg.homepage)
-                .bind(&pkg.license)
-                .bind(&pkg.registry)
-                .execute(&self.db)
-                .await
-                .context("failed to insert known package into database")?;
+            sqlx::query(
+                "INSERT INTO known_packages
+                    (name, version, description, homepage, license, registry)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (name, version)
+                    DO UPDATE
+                    SET description = $3, homepage = $4, license = $5, registry = $6
+                    WHERE name = $1 AND version = $2",
+            )
+            .bind(&pkg.name)
+            .bind(&pkg.version)
+            .bind(&pkg.description)
+            .bind(&pkg.homepage)
+            .bind(&pkg.license)
+            .bind(&pkg.registry)
+            .execute(&self.db)
+            .await
+            .context("failed to insert known package into database")?;
         }
         Ok(())
     }
@@ -461,6 +469,35 @@ mod tests {
             Some("https://example.invalid/foo".to_string())
         );
         assert_eq!(results[0].license, Some("MIT".to_string()));
+        assert_eq!(results[0].registry, "test");
+    }
+
+    #[tokio::test]
+    async fn test_add_known_packages_updates_existing() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&MockFetcher::default()).await.unwrap();
+        state.add_registry(&registry).await.unwrap();
+
+        let pkgs = vec![ManifestPackage {
+            name: "test-package".to_string(),
+            version: "0.1.0".to_string(),
+            description: Some("A test package".to_string()),
+            homepage: Some("https://example.invalid/foo".to_string()),
+            license: Some("BSD".to_string()),
+            registry: "test".to_string(),
+        }];
+        state.add_known_packages(&pkgs).await.unwrap();
+        let results = state.search_known_packages("foo").await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "test-package");
+        assert_eq!(results[0].version, "0.1.0");
+        assert_eq!(results[0].description, Some("A test package".to_string()));
+        assert_eq!(
+            results[0].homepage,
+            Some("https://example.invalid/foo".to_string())
+        );
+        assert_eq!(results[0].license, Some("BSD".to_string()));
         assert_eq!(results[0].registry, "test");
     }
 }
