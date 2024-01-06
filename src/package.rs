@@ -175,10 +175,8 @@ mod tests {
         let pkg: Package = crate::manifest::Package {
             name: "foo".to_string(),
             version: "1.2.3".to_string(),
-            description: None,
-            homepage: None,
-            license: None,
             registry: "test".to_string(),
+            ..Default::default()
         }
         .into();
         assert_eq!(pkg.name, "foo");
@@ -264,10 +262,8 @@ mod tests {
             .add_known_packages(&[ManifestPackage {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                description: None,
-                homepage: None,
-                license: None,
                 registry: "test".to_string(),
+                ..Default::default()
             }])
             .await
             .unwrap();

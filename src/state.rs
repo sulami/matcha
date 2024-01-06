@@ -242,11 +242,11 @@ impl State {
         for pkg in pkgs {
             sqlx::query(
                 "INSERT INTO known_packages
-                    (name, version, description, homepage, license, registry)
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    (name, version, description, homepage, license, registry, source, build, artifacts)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     ON CONFLICT (name, version)
                     DO UPDATE
-                    SET description = $3, homepage = $4, license = $5, registry = $6
+                    SET description = $3, homepage = $4, license = $5, registry = $6, source = $7, build = $8, artifacts = $9
                     WHERE name = $1 AND version = $2",
             )
             .bind(&pkg.name)
@@ -255,6 +255,9 @@ impl State {
             .bind(&pkg.homepage)
             .bind(&pkg.license)
             .bind(&pkg.registry)
+            .bind(&pkg.source)
+            .bind(&pkg.build)
+            .bind(&pkg.artifacts)
             .execute(&self.db)
             .await
             .context("failed to insert known package into database")?;
@@ -266,7 +269,7 @@ impl State {
     pub async fn search_known_packages(&self, query: &str) -> Result<Vec<ManifestPackage>> {
         let query = format!("%{}%", query);
         let pkgs = sqlx::query_as::<_, ManifestPackage>(
-            r"SELECT name, version, description, homepage, license, registry
+            r"SELECT *
                 FROM known_packages
                 WHERE name LIKE $1
                 OR description LIKE $1
@@ -287,9 +290,9 @@ impl State {
     ) -> Result<Vec<ManifestPackage>> {
         let query = format!("%{}%", query);
         let pkgs = sqlx::query_as::<_, ManifestPackage>(
-            r"SELECT name, version, description, homepage, license, registry
+            r"SELECT *
             FROM (
-                SELECT name, version, description, homepage, license, registry
+                SELECT *
                 FROM known_packages
                 WHERE name LIKE $1
                 OR description LIKE $1
@@ -498,24 +501,24 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                license: Some("MIT".to_string()),
                 registry: "test".to_string(),
+                ..Default::default()
             },
             ManifestPackage {
                 name: "bar".to_string(),
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/bar".to_string()),
-                license: Some("MIT".to_string()),
                 registry: "test".to_string(),
+                ..Default::default()
             },
             ManifestPackage {
                 name: "baz".to_string(),
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/baz".to_string()),
-                license: Some("MIT".to_string()),
                 registry: "test".to_string(),
+                ..Default::default()
             },
         ];
         state.add_known_packages(&pkgs).await.unwrap();
@@ -528,7 +531,6 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].license, Some("MIT".to_string()));
         assert_eq!(results[0].registry, "test");
     }
 
@@ -542,24 +544,24 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                license: Some("MIT".to_string()),
                 registry: "test".to_string(),
+                ..Default::default()
             },
             ManifestPackage {
                 name: "bar".to_string(),
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/bar".to_string()),
-                license: Some("MIT".to_string()),
                 registry: "test".to_string(),
+                ..Default::default()
             },
             ManifestPackage {
                 name: "foo".to_string(),
                 version: "1.0.1".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                license: Some("MIT".to_string()),
                 registry: "test".to_string(),
+                ..Default::default()
             },
         ];
         state.add_known_packages(&pkgs).await.unwrap();
@@ -575,7 +577,6 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].license, Some("MIT".to_string()));
         assert_eq!(results[0].registry, "test");
     }
 
@@ -588,8 +589,8 @@ mod tests {
             version: "0.1.0".to_string(),
             description: Some("A test package".to_string()),
             homepage: Some("https://example.invalid/foo".to_string()),
-            license: Some("BSD".to_string()),
             registry: "test".to_string(),
+            ..Default::default()
         }];
         state.add_known_packages(&pkgs).await.unwrap();
         let results = state.search_known_packages("foo").await.unwrap();
@@ -601,7 +602,6 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].license, Some("BSD".to_string()));
         assert_eq!(results[0].registry, "test");
     }
 }

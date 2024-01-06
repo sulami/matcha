@@ -2,10 +2,10 @@ use std::{fmt::Display, str::FromStr};
 
 use anyhow::Error;
 use serde::{Deserialize, Deserializer};
-use sqlx::FromRow;
+use sqlx::{types::Json, FromRow};
 
 /// Manifest metadata.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Manifest {
     /// The schema version of the manifest.
     pub schema_version: u32,
@@ -20,7 +20,7 @@ pub struct Manifest {
 }
 
 /// A package, as described by a registry manifest.
-#[derive(Debug, FromRow, Deserialize)]
+#[derive(Debug, FromRow, Deserialize, Default)]
 pub struct Package {
     /// The name of the package.
     pub name: String,
@@ -32,6 +32,12 @@ pub struct Package {
     pub homepage: Option<String>,
     /// The license of the package.
     pub license: Option<String>,
+    /// The source of the package. Can be `None` for meta packages.
+    pub source: Option<String>,
+    /// The build command of the package.
+    pub build: Option<String>,
+    /// The artifacts of the package after building.
+    pub artifacts: Json<Option<Vec<String>>>,
     /// The registry this package is from.
     pub registry: String,
 }
@@ -48,6 +54,9 @@ impl<'de> Deserialize<'de> for Manifest {
             description: Option<String>,
             homepage: Option<String>,
             license: Option<String>,
+            source: Option<String>,
+            build: Option<String>,
+            artifacts: Option<Vec<String>>,
         }
 
         #[derive(Deserialize)]
@@ -71,6 +80,9 @@ impl<'de> Deserialize<'de> for Manifest {
                 homepage: temp_package.homepage,
                 license: temp_package.license,
                 registry: temp_manifest.name.clone(),
+                source: temp_package.source,
+                build: temp_package.build,
+                artifacts: Json(temp_package.artifacts),
             })
             .collect();
 
@@ -126,6 +138,9 @@ mod tests {
             description = "A test package"
             homepage = "https://example.invalid/test-package"
             license = "MIT"
+            source = "https://example.invalid/test-package/archive/0.1.0.tar.gz"
+            build = "cargo build --release"
+            artifacts = ["target/release/test-package"]
         "#;
 
         let manifest: Manifest = manifest.parse().unwrap();
@@ -146,5 +161,13 @@ mod tests {
         );
         assert_eq!(manifest.packages[0].license, Some("MIT".to_string()));
         assert_eq!(manifest.packages[0].registry, "test");
+        assert_eq!(
+            manifest.packages[0].source,
+            Some("https://example.invalid/test-package/archive/0.1.0.tar.gz".to_string())
+        );
+        assert_eq!(
+            manifest.packages[0].build,
+            Some("cargo build --release".to_string())
+        );
     }
 }
