@@ -104,7 +104,7 @@ impl Display for Package {
         if let Some(license) = &self.license {
             write!(f, " [{}]", license)?;
         }
-        Ok(())
+        write!(f, " < {}", self.registry)
     }
 }
 
