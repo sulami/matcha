@@ -91,7 +91,7 @@ struct Cli {
 #[derive(Parser, Debug)]
 enum Command {
     /// Install one or more packages
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = true, alias = "i", alias = "add")]
     Install {
         /// Packages to install
         #[arg(required = true)]
@@ -99,7 +99,12 @@ enum Command {
     },
 
     /// Uninstall one or more packages
-    #[command(arg_required_else_help = true)]
+    #[command(
+        arg_required_else_help = true,
+        alias = "u",
+        alias = "remove",
+        alias = "rm"
+    )]
     Uninstall {
         /// Packages to uninstall
         #[arg(required = true)]
@@ -107,10 +112,11 @@ enum Command {
     },
 
     /// List all installed packages
+    #[command(alias = "ls")]
     List,
 
     /// Search for a package
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = true, alias = "s", alias = "find")]
     Search {
         /// Search query
         query: String,
@@ -120,7 +126,7 @@ enum Command {
     Fetch,
 
     /// Manage registries
-    #[command(subcommand)]
+    #[command(subcommand, alias = "r", alias = "reg")]
     Registry(RegistryCommand),
 }
 
@@ -134,23 +140,28 @@ enum RegistryCommand {
     },
 
     /// Remove a package registry
-    #[command(arg_required_else_help = true)]
+    #[command(arg_required_else_help = true, alias = "rm")]
     Remove {
         /// Registry to remove
         name: String,
     },
 
     /// List all registries
+    #[command(alias = "ls")]
     List,
 }
 
 /// Installs a package.
 async fn install_package(state: &State, pkg: &str) -> Result<()> {
-    let pkg = pkg.parse().context("failed to parse package name")?;
+    let mut pkg = pkg.parse().context("failed to parse package name")?;
 
     if state.is_package_installed(&pkg).await? {
         return Err(anyhow!("package {} is already installed", pkg));
     }
+
+    pkg.resolve_known_version(state)
+        .await
+        .context("failed to resolve package version")?;
 
     // TODO: Deal with rollbacks for failed installs.
     state
