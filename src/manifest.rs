@@ -1,10 +1,11 @@
 use std::str::FromStr;
 
 use anyhow::Error;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use sqlx::FromRow;
 
 /// Manifest metadata.
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct Manifest {
     /// The schema version of the manifest.
     pub schema_version: u32,
@@ -20,8 +21,8 @@ pub struct Manifest {
     pub packages: Vec<Package>,
 }
 
-/// A package, as described by a package manifest.
-#[derive(Debug, Deserialize)]
+/// A package, as described by a registry manifest.
+#[derive(Debug, FromRow, Deserialize)]
 pub struct Package {
     /// The name of the package.
     pub name: String,
@@ -33,6 +34,58 @@ pub struct Package {
     pub homepage: Option<String>,
     /// The license of the package.
     pub license: Option<String>,
+    /// The registry this package is from.
+    pub registry: String,
+}
+
+impl<'de> Deserialize<'de> for Manifest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TempPackage {
+            name: String,
+            version: String,
+            description: Option<String>,
+            homepage: Option<String>,
+            license: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct TempManifest {
+            schema_version: u32,
+            name: String,
+            uri: String,
+            version: String,
+            description: Option<String>,
+            packages: Vec<TempPackage>,
+        }
+
+        let temp_manifest = TempManifest::deserialize(deserializer)?;
+
+        let packages = temp_manifest
+            .packages
+            .into_iter()
+            .map(|temp_package| Package {
+                name: temp_package.name,
+                version: temp_package.version,
+                description: temp_package.description,
+                homepage: temp_package.homepage,
+                license: temp_package.license,
+                registry: temp_manifest.name.clone(),
+            })
+            .collect();
+
+        Ok(Manifest {
+            schema_version: temp_manifest.schema_version,
+            name: temp_manifest.name,
+            uri: temp_manifest.uri,
+            version: temp_manifest.version,
+            description: temp_manifest.description,
+            packages,
+        })
+    }
 }
 
 impl FromStr for Manifest {
@@ -82,5 +135,6 @@ mod tests {
             Some("https://example.invalid/test-package".to_string())
         );
         assert_eq!(manifest.packages[0].license, Some("MIT".to_string()));
+        assert_eq!(manifest.packages[0].registry, "test");
     }
 }

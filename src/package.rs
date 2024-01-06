@@ -112,6 +112,7 @@ mod tests {
             description: None,
             homepage: None,
             license: None,
+            registry: "test".to_string(),
         }
         .into();
         assert_eq!(pkg.name, "foo");

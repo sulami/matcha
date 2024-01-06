@@ -17,3 +17,15 @@ CREATE TABLE IF NOT EXISTS registries (
     last_fetched DATETIME,
     PRIMARY KEY (name)
 );
+
+CREATE TABLE IF NOT EXISTS known_packages (
+    name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    description TEXT,
+    homepage TEXT,
+    license TEXT,
+
+    registry TEXT NOT NULL,
+    PRIMARY KEY (name, version),
+    FOREIGN KEY (registry) REFERENCES registries (name)
+);
