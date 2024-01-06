@@ -2,11 +2,14 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use tokio::task::JoinSet;
 
+pub(crate) mod download;
 pub(crate) mod manifest;
 pub(crate) mod package;
+pub(crate) mod registry;
 pub(crate) mod state;
 
 use package::Package;
+use registry::Registry;
 use state::State;
 
 #[tokio::main]
@@ -47,31 +50,11 @@ async fn main() -> Result<()> {
         }
         Command::List => list_packages(&state).await?,
         Command::Registry(cmd) => match cmd {
-            RegistryCommand::Add { uris } => {
-                let mut set = JoinSet::new();
-                for uri in uris {
-                    let state = state.clone();
-                    set.spawn(async move { add_registry(&state, &uri).await });
-                }
-
-                let mut results = vec![];
-                while let Some(result) = set.join_next().await {
-                    results.push(result?);
-                }
-                results.into_iter().collect::<Result<()>>()?;
+            RegistryCommand::Add { name, uri } => {
+                add_registry(&state, &name, &uri).await?;
             }
-            RegistryCommand::Remove { uris } => {
-                let mut set = JoinSet::new();
-                for uri in uris {
-                    let state = state.clone();
-                    set.spawn(async move { remove_registry(&state, &uri).await });
-                }
-
-                let mut results = vec![];
-                while let Some(result) = set.join_next().await {
-                    results.push(result?);
-                }
-                results.into_iter().collect::<Result<()>>()?;
+            RegistryCommand::Remove { name } => {
+                remove_registry(&state, &name).await?;
             }
             RegistryCommand::List => {
                 list_registries(&state).await?;
@@ -124,17 +107,17 @@ enum RegistryCommand {
     /// Add one or more registries
     #[command(arg_required_else_help = true)]
     Add {
+        /// Name of the registry
+        name: String,
         /// Registry to add
-        #[arg(required = true)]
-        uris: Vec<String>,
+        uri: String,
     },
 
     /// Remove one or more registries
     #[command(arg_required_else_help = true)]
     Remove {
-        /// Registry to add
-        #[arg(required = true)]
-        uris: Vec<String>,
+        /// Registry to remove
+        name: String,
     },
 
     /// List all registries
@@ -186,10 +169,11 @@ async fn list_packages(state: &State) -> Result<()> {
 }
 
 /// Adds a registry.
-async fn add_registry(state: &State, uri: &str) -> Result<()> {
-    state.add_registry(uri).await?;
+async fn add_registry(state: &State, name: &str, uri: &str) -> Result<()> {
+    let registry = Registry::new(name, uri);
+    state.add_registry(&registry).await?;
 
-    println!("Added registry {}", uri);
+    println!("Added registry {}", registry);
     Ok(())
 }
 
@@ -280,8 +264,13 @@ mod tests {
         let state = State::load(":memory:").await.unwrap();
         let uri = "https://example.invalid";
 
-        add_registry(&state, uri).await.unwrap();
-        assert!(state.registries().await.unwrap().contains(&uri.to_string()));
+        add_registry(&state, "foo", uri).await.unwrap();
+        assert!(state
+            .registries()
+            .await
+            .unwrap()
+            .iter()
+            .any(|r| r.uri.to_string() == uri));
     }
 
     #[tokio::test]
@@ -289,27 +278,26 @@ mod tests {
         let state = State::load(":memory:").await.unwrap();
         let uri = "https://example.invalid";
 
-        add_registry(&state, uri).await.unwrap();
-        let result = add_registry(&state, uri).await;
+        add_registry(&state, "foo", uri).await.unwrap();
+        let result = add_registry(&state, "foo", uri).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_remove_registry() {
         let state = State::load(":memory:").await.unwrap();
-        let uri = "https://example.invalid";
 
-        add_registry(&state, uri).await.unwrap();
-        remove_registry(&state, uri).await.unwrap();
-        assert!(!state.registries().await.unwrap().contains(&uri.to_string()));
+        add_registry(&state, "foo", "https://example.invalid")
+            .await
+            .unwrap();
+        remove_registry(&state, "foo").await.unwrap();
+        assert!(!state.registry_exists("foo").await.unwrap());
     }
 
     #[tokio::test]
     async fn test_remove_registry_refuses_if_registry_is_not_added() {
         let state = State::load(":memory:").await.unwrap();
-        let uri = "https://example.invalid";
-
-        let result = remove_registry(&state, uri).await;
+        let result = remove_registry(&state, "foo").await;
         assert!(result.is_err());
     }
 }

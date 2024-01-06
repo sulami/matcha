@@ -8,7 +8,7 @@ use anyhow::{anyhow, Context, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use tokio::fs::create_dir_all;
 
-use crate::package::Package;
+use crate::{package::Package, registry::Registry};
 
 /// The internal state of the application, backed by a SQLite database.
 #[derive(Clone)]
@@ -86,8 +86,9 @@ impl State {
             );
 
             CREATE TABLE IF NOT EXISTS registries (
+                name TEXT NOT NULL,
                 uri TEXT NOT NULL,
-                PRIMARY KEY (uri)
+                PRIMARY KEY (name)
             );
             "#,
         )
@@ -199,12 +200,13 @@ impl State {
     }
 
     /// Adds a registry to the internal state.
-    pub async fn add_registry(&self, uri: &str) -> Result<()> {
-        if self.registry_exists(uri).await? {
-            return Err(anyhow!("registry {} already exists", uri));
+    pub async fn add_registry(&self, reg: &Registry) -> Result<()> {
+        if self.registry_exists(&reg.name).await? {
+            return Err(anyhow!("registry {} already exists", &reg.uri));
         }
-        sqlx::query("INSERT INTO registries (uri) VALUES (?)")
-            .bind(uri)
+        sqlx::query("INSERT INTO registries (name, uri) VALUES (?, ?)")
+            .bind(&reg.name)
+            .bind(reg.uri.to_string())
             .execute(&self.db)
             .await
             .context("failed to insert registry into database")?;
@@ -212,12 +214,12 @@ impl State {
     }
 
     /// Removes a registry from the internal state.
-    pub async fn remove_registry(&self, uri: &str) -> Result<()> {
-        if !self.registry_exists(uri).await? {
-            return Err(anyhow!("registry {} does not exist", uri));
+    pub async fn remove_registry(&self, name: &str) -> Result<()> {
+        if !self.registry_exists(name).await? {
+            return Err(anyhow!("registry {} does not exist", name));
         }
-        sqlx::query("DELETE FROM registries WHERE uri = ?")
-            .bind(uri)
+        sqlx::query("DELETE FROM registries WHERE name = ?")
+            .bind(name)
             .execute(&self.db)
             .await
             .context("failed to remove registry from database")?;
@@ -225,18 +227,18 @@ impl State {
     }
 
     /// Returns all registries.
-    pub async fn registries(&self) -> Result<Vec<String>> {
-        let registries = sqlx::query_scalar("SELECT uri FROM registries")
+    pub async fn registries(&self) -> Result<Vec<Registry>> {
+        let registries = sqlx::query_as::<_, Registry>("SELECT name, uri FROM registries")
             .fetch_all(&self.db)
             .await
             .context("failed to fetch registries from database")?;
         Ok(registries)
     }
 
-    /// Returns true if the registry exists.
-    async fn registry_exists(&self, uri: &str) -> Result<bool> {
-        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE uri = ?)")
-            .bind(uri)
+    /// Returns true if a registry with this name exists.
+    pub async fn registry_exists(&self, name: &str) -> Result<bool> {
+        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE name = ?)")
+            .bind(name)
             .fetch_one(&self.db)
             .await
             .context("failed to check if registry exists in database")?;
@@ -246,6 +248,8 @@ impl State {
 
 #[cfg(test)]
 mod tests {
+    use crate::registry::Registry;
+
     use super::*;
 
     #[tokio::test]
@@ -414,57 +418,41 @@ mod tests {
     #[tokio::test]
     async fn test_registry_add_list_remove() {
         let state = State::load(":memory:").await.unwrap();
-        state
-            .add_registry("https://example.invalid/registry")
-            .await
-            .unwrap();
+        let registry = Registry::new("foo", "https://example.invalid/registry");
+        state.add_registry(&registry).await.unwrap();
         let registries = state.registries().await.unwrap();
         assert_eq!(registries.len(), 1);
-        assert_eq!(registries[0], "https://example.invalid/registry");
-        state
-            .remove_registry("https://example.invalid/registry")
-            .await
-            .unwrap();
+        assert_eq!(
+            registries[0].uri.to_string(),
+            "https://example.invalid/registry"
+        );
+        state.remove_registry("foo").await.unwrap();
         let registries = state.registries().await.unwrap();
         assert!(registries.is_empty());
     }
 
     #[tokio::test]
-    async fn test_add_registry_refuses_same_uri_twice() {
+    async fn test_add_registry_refuses_same_name_twice() {
         let state = State::load(":memory:").await.unwrap();
-        state
-            .add_registry("https://example.invalid/registry")
-            .await
-            .unwrap();
-        assert!(state
-            .add_registry("https://example.invalid/registry")
-            .await
-            .is_err());
+        let registry = Registry::new("foo", "https://example.invalid/registry");
+        state.add_registry(&registry).await.unwrap();
+        assert!(state.add_registry(&registry).await.is_err());
     }
 
     #[tokio::test]
-    async fn test_remove_registry_refuses_nonexistent_uri() {
+    async fn test_remove_registry_refuses_nonexistent_name() {
         let state = State::load(":memory:").await.unwrap();
-        assert!(state
-            .remove_registry("https://example.invalid/registry")
-            .await
-            .is_err());
+        assert!(state.remove_registry("foo").await.is_err());
     }
 
     #[tokio::test]
     async fn test_registry_exists() {
         let state = State::load(":memory:").await.unwrap();
-        assert!(!state
-            .registry_exists("https://example.invalid/registry")
-            .await
-            .unwrap());
+        assert!(!state.registry_exists("foo").await.unwrap());
         state
-            .add_registry("https://example.invalid/registry")
+            .add_registry(&Registry::new("foo", "https://example.invalid/registry"))
             .await
             .unwrap();
-        assert!(state
-            .registry_exists("https://example.invalid/registry")
-            .await
-            .unwrap());
+        assert!(state.registry_exists("foo").await.unwrap());
     }
 }
