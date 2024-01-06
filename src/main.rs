@@ -87,7 +87,12 @@ struct Cli {
     command: Command,
 
     /// Path to the internal state database
-    #[arg(short, long, default_value = "~/.config/pkg/state.db")]
+    #[arg(
+        short,
+        long,
+        env = "PKG_STATE_DB",
+        default_value = "~/.config/pkg/state.db"
+    )]
     state_db: String,
 }
 
