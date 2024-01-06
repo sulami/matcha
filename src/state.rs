@@ -5,7 +5,10 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
+use sqlx::{
+    migrate,
+    sqlite::{SqliteConnectOptions, SqlitePool},
+};
 use tokio::fs::create_dir_all;
 
 use crate::{package::Package, registry::Registry};
@@ -70,31 +73,10 @@ impl State {
         let db = Self::connect_db(path)
             .await
             .context("failed to create new database")?;
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS meta (
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                PRIMARY KEY (key)
-            );
-            INSERT INTO meta (key, value) VALUES ('schema_version', '1');
-
-            CREATE TABLE IF NOT EXISTS installed_packages (
-                name TEXT NOT NULL,
-                version TEXT NOT NULL,
-                PRIMARY KEY (name, version)
-            );
-
-            CREATE TABLE IF NOT EXISTS registries (
-                name TEXT NOT NULL,
-                uri TEXT NOT NULL,
-                PRIMARY KEY (name)
-            );
-            "#,
-        )
-        .execute(&db)
-        .await
-        .context("failed to initialize database schema")?;
+        migrate!("./migrations")
+            .run(&db)
+            .await
+            .context("failed to initialize database")?;
         Ok(db)
     }
 
@@ -228,10 +210,11 @@ impl State {
 
     /// Returns all registries.
     pub async fn registries(&self) -> Result<Vec<Registry>> {
-        let registries = sqlx::query_as::<_, Registry>("SELECT name, uri FROM registries")
-            .fetch_all(&self.db)
-            .await
-            .context("failed to fetch registries from database")?;
+        let registries =
+            sqlx::query_as::<_, Registry>("SELECT name, uri, last_fetched FROM registries")
+                .fetch_all(&self.db)
+                .await
+                .context("failed to fetch registries from database")?;
         Ok(registries)
     }
 

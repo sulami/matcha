@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use sqlx::{sqlite::SqliteRow, FromRow, Row};
+use time::OffsetDateTime;
 use tokio::sync::watch;
 
 use crate::download::download_file;
@@ -16,6 +17,8 @@ pub struct Registry {
     pub name: String,
     /// The URI of the registry.
     pub uri: Uri,
+    /// The last time this registry was fetched.
+    pub last_fetched: Option<OffsetDateTime>,
 }
 
 /// A registry URI.
@@ -35,28 +38,27 @@ impl Registry {
         Self {
             name: name.into(),
             uri: uri.into(),
+            last_fetched: None,
         }
     }
 
-    pub async fn fetch_manifest(&self) -> Result<Manifest> {
-        match &self.uri {
-            Uri::File(path) => {
-                let manifest = tokio::fs::read_to_string(path).await?;
-                Ok(manifest.parse()?)
-            }
-            Uri::Http(uri) => {
+    /// Fetches the manifest from the registry.
+    pub async fn fetch(&mut self) -> Result<Manifest> {
+        let s = match &self.uri {
+            Uri::File(path) => tokio::fs::read_to_string(path)
+                .await
+                .context("failed to read manifest at {path}")?,
+            Uri::Http(uri) | Uri::Https(uri) => {
                 let (tx, rx) = watch::channel(0);
-                let manifest = String::from_utf8(download_file(uri, tx).await?)
-                    .context("failed to parse downloaded manifest as utf-8")?;
-                Ok(manifest.parse().context("failed to parse manifest")?)
+                let bytes = download_file(uri, tx)
+                    .await
+                    .context("failed to fetch manifest from {uri}")?;
+                String::from_utf8(bytes).context("failed to parse downloaded manifest as utf-8")?
             }
-            Uri::Https(uri) => {
-                let (tx, rx) = watch::channel(0);
-                let manifest = String::from_utf8(download_file(uri, tx).await?)
-                    .context("failed to parse downloaded manifest as utf-8")?;
-                Ok(manifest.parse().context("failed to parse manifest")?)
-            }
-        }
+        };
+        let manifest = s.parse().context("failed to parse manifest")?;
+        self.last_fetched = Some(OffsetDateTime::now_local()?);
+        Ok(manifest)
     }
 }
 
