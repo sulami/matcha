@@ -160,13 +160,13 @@ impl FromStr for Uri {
 /// A fetcher fetches a manifest from a registry.
 ///
 /// This trait exists so that we can mock out fetching for tests.
-pub trait Fetcher {
+pub trait Fetcher: Send + Sync + Clone {
     /// Fetches the manifest string from the registry.
-    async fn fetch(&self, reg: &Registry) -> Result<String>;
+    fn fetch(&self, reg: &Registry) -> impl std::future::Future<Output = Result<String>> + Send;
 }
 
 /// The default fetcher, which fetches from the filesystem or HTTP.
-#[derive(Default)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct DefaultFetcher;
 
 impl Fetcher for DefaultFetcher {
@@ -189,6 +189,7 @@ impl Fetcher for DefaultFetcher {
 
 #[cfg(test)]
 /// A mock fetcher, which returns a pre-defined manifest.
+#[derive(Debug, Clone)]
 pub struct MockFetcher {
     pub manifest: String,
 }

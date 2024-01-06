@@ -207,7 +207,10 @@ async fn list_registries(state: &State) -> Result<()> {
 }
 
 /// Ensures all registries are up to date by potentially refetching them.
-async fn ensure_registries_are_current(state: &State, fetcher: &impl Fetcher) -> Result<()> {
+async fn ensure_registries_are_current(
+    state: &State,
+    fetcher: &(impl Fetcher + 'static),
+) -> Result<()> {
     let registries = state.registries().await?;
 
     let mut set = JoinSet::new();
@@ -216,7 +219,7 @@ async fn ensure_registries_are_current(state: &State, fetcher: &impl Fetcher) ->
         if registry.should_update() {
             let state = state.clone();
             let fetcher = fetcher.clone();
-            set.spawn(async move { registry.update(&state, &DefaultFetcher).await });
+            set.spawn(async move { registry.update(&state, &fetcher).await });
         }
     }
 
