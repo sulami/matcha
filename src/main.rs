@@ -35,7 +35,9 @@ async fn main() -> Result<()> {
 
                 for pkg in pkgs {
                     let state = state.clone();
-                    set.spawn(async move { install_package(&state, &pkg).await });
+                    set.spawn(
+                        async move { install_package(&state, &pkg, &Workspace::default()).await },
+                    );
                 }
 
                 let mut results = vec![];
@@ -262,17 +264,14 @@ enum RegistryCommand {
 }
 
 /// Installs a package.
-async fn install_package(state: &State, pkg: &str) -> Result<String> {
+async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<String> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let pkg_spec: KnownPackageSpec = pkg_req
         .resolve_known_version(state)
         .await
         .context("failed to resolve package version")?;
 
-    if state
-        .is_package_installed(&pkg_spec, &Workspace::default())
-        .await?
-    {
+    if state.is_package_installed(&pkg_spec, workspace).await? {
         return Err(anyhow!("package {} is already installed", pkg));
     }
 
@@ -468,7 +467,9 @@ mod tests {
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
-        install_package(&state, &pkg.name).await.unwrap();
+        install_package(&state, &pkg.name, &Workspace::default())
+            .await
+            .unwrap();
         assert!(state
             .is_package_installed(&pkg, &Workspace::default())
             .await
@@ -480,8 +481,10 @@ mod tests {
         let state = setup_state_with_registry().await.unwrap();
         let pkg = "test-package@0.1.0";
 
-        install_package(&state, pkg).await.unwrap();
-        let result = install_package(&state, pkg).await;
+        install_package(&state, pkg, &Workspace::default())
+            .await
+            .unwrap();
+        let result = install_package(&state, pkg, &Workspace::default()).await;
         assert!(result.is_err());
     }
 
@@ -491,7 +494,9 @@ mod tests {
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
-        install_package(&state, &pkg.name).await.unwrap();
+        install_package(&state, &pkg.name, &Workspace::default())
+            .await
+            .unwrap();
         uninstall_package(&state, &pkg.name).await.unwrap();
         assert!(!state
             .is_package_installed(&pkg, &Workspace::default())
@@ -513,7 +518,9 @@ mod tests {
         let state = setup_state_with_registry().await.unwrap();
         let pkg = "test-package@0.1.0";
 
-        install_package(&state, pkg).await.unwrap();
+        install_package(&state, pkg, &Workspace::default())
+            .await
+            .unwrap();
         list_packages(&state).await.unwrap();
     }
 
@@ -618,5 +625,29 @@ mod tests {
 
         add_workspace(&state, name).await.unwrap();
         list_workspaces(&state).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_with_packages() {
+        let state = setup_state_with_registry().await.unwrap();
+        let workspace = Workspace::new("test");
+
+        add_workspace(&state, &workspace.name).await.unwrap();
+        install_package(&state, "test-package@0.1.0", &workspace)
+            .await
+            .unwrap();
+        remove_workspace(&state, &workspace.name).await.unwrap();
+        assert!(!state
+            .is_package_installed(
+                &"test-package@0.1.0"
+                    .parse::<PackageRequest>()
+                    .unwrap()
+                    .resolve_known_version(&state)
+                    .await
+                    .unwrap(),
+                &workspace
+            )
+            .await
+            .unwrap());
     }
 }
