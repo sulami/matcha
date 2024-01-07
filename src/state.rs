@@ -104,13 +104,18 @@ impl State {
     }
 
     /// Adds a package to the internal state.
-    pub async fn add_installed_package(&self, pkg: &KnownPackageSpec) -> Result<()> {
+    pub async fn add_installed_package(
+        &self,
+        pkg: &KnownPackageSpec,
+        workspace: &Workspace,
+    ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO installed_packages (name, version, requested_version) VALUES ($1, $2, $3)",
+            "INSERT INTO installed_packages (name, version, requested_version, workspace) VALUES ($1, $2, $3, $4)",
         )
         .bind(&pkg.name)
         .bind(&pkg.version)
         .bind(&pkg.requested_version)
+        .bind(&workspace.name)
         .execute(&self.db)
         .await
         .context("failed to insert installed package into database")?;
@@ -395,7 +400,10 @@ mod tests {
     async fn test_package_add_list_remove() {
         let state = State::load(":memory:").await.unwrap();
         let spec = known_package("test-package", "0.1.0");
-        state.add_installed_package(&spec).await.unwrap();
+        state
+            .add_installed_package(&spec, &Workspace::default())
+            .await
+            .unwrap();
         let packages = state
             .installed_packages(&Workspace::default())
             .await
@@ -415,8 +423,14 @@ mod tests {
     async fn test_add_package_refuses_same_version_twice() {
         let state = State::load(":memory:").await.unwrap();
         let spec = known_package("test-package", "0.1.0");
-        state.add_installed_package(&spec).await.unwrap();
-        assert!(state.add_installed_package(&spec).await.is_err());
+        state
+            .add_installed_package(&spec, &Workspace::default())
+            .await
+            .unwrap();
+        assert!(state
+            .add_installed_package(&spec, &Workspace::default())
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -424,7 +438,10 @@ mod tests {
         let state = State::load(":memory:").await.unwrap();
         let spec = known_package("test-package", "0.1.0");
         assert!(!state.is_package_installed(&spec).await.unwrap());
-        state.add_installed_package(&spec).await.unwrap();
+        state
+            .add_installed_package(&spec, &Workspace::default())
+            .await
+            .unwrap();
         assert!(state.is_package_installed(&spec).await.unwrap());
     }
 

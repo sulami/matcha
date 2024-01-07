@@ -232,6 +232,7 @@ mod tests {
     use crate::{
         manifest::Package as ManifestPackage,
         registry::{MockFetcher, Registry},
+        workspace::Workspace,
     };
 
     /// Returns a known package spec with the given name and version.
@@ -287,7 +288,7 @@ mod tests {
     async fn test_resolve_version() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&known_package("foo", "1.0.0"))
+            .add_installed_package(&known_package("foo", "1.0.0"), &Workspace::default())
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -312,7 +313,7 @@ mod tests {
     async fn test_resolve_version_fails_if_this_version_is_not_installed() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&known_package("foo", "1.0.0"))
+            .add_installed_package(&known_package("foo", "1.0.0"), &Workspace::default())
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -326,11 +327,11 @@ mod tests {
     async fn test_resolve_installed_package_version_fails_if_multiple_matches_installed() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&known_package("foo", "1.0.0"))
+            .add_installed_package(&known_package("foo", "1.0.0"), &Workspace::default())
             .await
             .unwrap();
         state
-            .add_installed_package(&known_package("foo", "2.0.0"))
+            .add_installed_package(&known_package("foo", "2.0.0"), &Workspace::default())
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -377,7 +378,7 @@ mod tests {
     async fn test_resolve_known_version_fails_if_this_version_is_not_known() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&known_package("foo", "1.0.0"))
+            .add_installed_package(&known_package("foo", "1.0.0"), &Workspace::default())
             .await
             .unwrap();
         let pkg = PackageRequest {

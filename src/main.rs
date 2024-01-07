@@ -266,7 +266,7 @@ async fn install_package(state: &State, pkg: &str) -> Result<String> {
     download_build_package(&pkg).await?;
 
     state
-        .add_installed_package(&pkg_spec)
+        .add_installed_package(&pkg_spec, &Workspace::default())
         .await
         .context("failed to register installed package")?;
 
