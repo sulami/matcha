@@ -1,5 +1,6 @@
 use anyhow::Result;
-use futures_util::StreamExt;
+use bytes::Bytes;
+use futures_util::{Stream, StreamExt};
 use reqwest::Client;
 use tokio::sync::watch::Sender;
 
@@ -26,4 +27,17 @@ pub async fn download_file(url: &str, progress: Option<Sender<usize>>) -> Result
     }
 
     Ok(bytes)
+}
+
+/// Downloads a file from a URL, and returns the content length and a stream of bytes.
+pub async fn download_stream(
+    url: &str,
+) -> Result<(usize, impl Stream<Item = reqwest::Result<Bytes>>)> {
+    let client = Client::new();
+    let resp = client.get(url).send().await?;
+
+    let content_length = resp.content_length().unwrap_or(0) as usize;
+    let stream = resp.bytes_stream();
+
+    Ok((content_length, stream))
 }

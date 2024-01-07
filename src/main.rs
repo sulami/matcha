@@ -3,18 +3,18 @@ use clap::Parser;
 use tokio::task::JoinSet;
 
 pub(crate) mod download;
+pub(crate) mod installer;
 pub(crate) mod manifest;
 pub(crate) mod package;
 pub(crate) mod registry;
 pub(crate) mod state;
 pub(crate) mod ui;
 
-use package::PackageRequest;
+use installer::download_build_package;
+use package::{InstalledPackageSpec, KnownPackageSpec, PackageRequest};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use ui::create_progress_bar;
-
-use crate::package::{InstalledPackageSpec, KnownPackageSpec};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -224,44 +224,46 @@ enum RegistryCommand {
 
 /// Installs a package.
 async fn install_package(state: &State, pkg: &str) -> Result<String> {
-    let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let pkg: KnownPackageSpec = pkg
+    let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
+    let pkg_spec: KnownPackageSpec = pkg_req
         .resolve_known_version(state)
         .await
         .context("failed to resolve package version")?;
 
-    if state.is_package_installed(&pkg).await? {
+    if state.is_package_installed(&pkg_spec).await? {
         return Err(anyhow!("package {} is already installed", pkg));
     }
 
-    // TODO: Deal with rollbacks for failed installs.
+    let pkg = state.get_package(&pkg_spec).await?;
+    download_build_package(&pkg).await?;
+
     state
-        .add_installed_package(&pkg)
+        .add_installed_package(&pkg_spec)
         .await
         .context("failed to register installed package")?;
 
-    Ok(format!("Installed {pkg}"))
+    Ok(format!("Installed {pkg_spec}"))
 }
 
 /// Updates a package.
 async fn update_package(state: &State, pkg: &str) -> Result<Option<String>> {
-    let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let pkg: InstalledPackageSpec = pkg
+    let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
+    let pkg_spec: InstalledPackageSpec = pkg_req
         .resolve_installed_version(state)
         .await
         .context("failed to resolve package version")?;
 
-    if !state.is_package_installed(&pkg.clone().into()).await? {
-        return Err(anyhow!("package {} is not installed", pkg));
+    if !state.is_package_installed(&pkg_spec.clone().into()).await? {
+        return Err(anyhow!("package {} is not installed", pkg_spec));
     }
 
-    if let Some(new_version) = pkg.available_update(state).await? {
+    if let Some(new_version) = pkg_spec.available_update(state).await? {
         // install update
         // state
         //     .update_installed_package(&pkg, &new_version)
         //     .await
         //     .context("failed to update installed package")?;
-        Ok(Some(format!("Updated {pkg} to {new_version}")))
+        Ok(Some(format!("Updated {pkg_spec} to {new_version}")))
     } else {
         Ok(None)
     }
@@ -269,18 +271,18 @@ async fn update_package(state: &State, pkg: &str) -> Result<Option<String>> {
 
 /// Uninstalls a package.
 async fn uninstall_package(state: &State, pkg: &str) -> Result<String> {
-    let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let pkg: InstalledPackageSpec = pkg
+    let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
+    let pkg_spec: InstalledPackageSpec = pkg_req
         .resolve_installed_version(state)
         .await
         .context("failed to resolve package version")?;
 
     state
-        .remove_installed_package(&pkg)
+        .remove_installed_package(&pkg_spec)
         .await
         .context("failed to deregister installed package")?;
 
-    Ok(format!("Uninstalled {pkg}"))
+    Ok(format!("Uninstalled {pkg_spec}"))
 }
 
 /// Lists all installed packages.
@@ -300,7 +302,7 @@ async fn add_registry(state: &State, uri: &str, fetcher: &impl Fetcher) -> Resul
     registry.initialize(fetcher).await?;
     state.add_registry(&registry).await?;
 
-    println!("Added registry {}", registry);
+    eprintln!("Added registry {}", registry);
     Ok(())
 }
 
@@ -308,7 +310,7 @@ async fn add_registry(state: &State, uri: &str, fetcher: &impl Fetcher) -> Resul
 async fn remove_registry(state: &State, uri: &str) -> Result<()> {
     state.remove_registry(uri).await?;
 
-    println!("Removed registry {}", uri);
+    eprintln!("Removed registry {}", uri);
     Ok(())
 }
 

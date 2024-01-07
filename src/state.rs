@@ -303,6 +303,19 @@ impl State {
         .context("failed to fetch known package versions from database")?;
         Ok(versions)
     }
+
+    /// Get the full package from a spec.
+    pub async fn get_package(&self, spec: &KnownPackageSpec) -> Result<Package> {
+        let pkg = sqlx::query_as::<_, Package>(
+            "SELECT * FROM known_packages WHERE name = $1 AND version = $2",
+        )
+        .bind(&spec.name)
+        .bind(&spec.version)
+        .fetch_one(&self.db)
+        .await
+        .context("failed to fetch known package from database")?;
+        Ok(pkg)
+    }
 }
 
 #[cfg(test)]
