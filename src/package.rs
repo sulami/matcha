@@ -176,6 +176,23 @@ impl InstalledPackageSpec {
             requested_version: request.version.clone().unwrap_or_default(),
         }
     }
+
+    /// Returns the latest known version of this package, if it is newer than the installed one.
+    pub async fn available_update(&self, state: &State) -> Result<Option<KnownPackageSpec>> {
+        let known_versions = state.known_package_versions(&self.name).await?;
+        let Some(latest) = find_matching_version(&known_versions, &self.requested_version) else {
+            return Ok(None);
+        };
+        if self.version < latest {
+            Ok(Some(KnownPackageSpec {
+                name: self.name.clone(),
+                version: latest,
+                requested_version: self.requested_version.clone(),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl Display for InstalledPackageSpec {

@@ -531,4 +531,36 @@ mod tests {
         );
         assert_eq!(results[0].registry, "test");
     }
+
+    #[tokio::test]
+    async fn test_known_package_versions_is_in_descending_order() {
+        let state = setup_state_with_registry().await.unwrap();
+
+        let pkgs = vec![
+            Package {
+                name: "foo".to_string(),
+                version: "1.0.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+            Package {
+                name: "foo".to_string(),
+                version: "0.1.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+            Package {
+                name: "foo".to_string(),
+                version: "0.2.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+        ];
+        state.add_known_packages(&pkgs).await.unwrap();
+        let versions = state.known_package_versions("foo").await.unwrap();
+        assert_eq!(versions.len(), 3);
+        assert_eq!(versions[0], "1.0.0");
+        assert_eq!(versions[1], "0.2.0");
+        assert_eq!(versions[2], "0.1.0");
+    }
 }
