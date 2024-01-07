@@ -1,3 +1,5 @@
+use std::env::var;
+
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use tokio::task::JoinSet;
@@ -126,7 +128,7 @@ async fn main() -> Result<()> {
                 list_workspaces(&state).await?;
             }
             WorkspaceCommand::Shell { workspace } => {
-                todo!("workspace shells are not yet implemented");
+                workspace_shell(&state, &workspace).await?;
             }
         },
         Command::Registry(cmd) => match cmd {
@@ -441,6 +443,24 @@ async fn list_workspaces(state: &State) -> Result<()> {
     for workspace in workspaces {
         println!("{}", workspace);
     }
+
+    Ok(())
+}
+
+/// Runs a shell in the context of a workspace.
+async fn workspace_shell(state: &State, workspace: &str) -> Result<()> {
+    if state.get_workspace(workspace).await?.is_none() {
+        return Err(anyhow!("workspace {} does not exist", workspace));
+    }
+
+    let system_shell = var("SHELL").unwrap_or_else(|_| "zsh".to_string());
+    tokio::process::Command::new(system_shell)
+        // TODO Patch the $PATH to include the workspace's bin directory.
+        .env("PKG_WORKSPACE", workspace)
+        .spawn()
+        .context("failed to run workspace shell")?
+        .wait()
+        .await?;
 
     Ok(())
 }
