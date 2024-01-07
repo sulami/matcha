@@ -88,7 +88,7 @@ impl State {
     /// Returns all installed packages.
     pub async fn installed_packages(&self) -> Result<Vec<InstalledPackageSpec>> {
         let packages = sqlx::query_as::<_, InstalledPackageSpec>(
-            "SELECT name, version FROM installed_packages",
+            "SELECT name, version, requested_version FROM installed_packages",
         )
         .fetch_all(&self.db)
         .await
@@ -98,12 +98,15 @@ impl State {
 
     /// Adds a package to the internal state.
     pub async fn add_installed_package(&self, pkg: &KnownPackageSpec) -> Result<()> {
-        sqlx::query("INSERT INTO installed_packages (name, version) VALUES (?, ?)")
-            .bind(&pkg.name)
-            .bind(&pkg.version)
-            .execute(&self.db)
-            .await
-            .context("failed to insert installed package into database")?;
+        sqlx::query(
+            "INSERT INTO installed_packages (name, version, requested_version) VALUES ($1, $2, $3)",
+        )
+        .bind(&pkg.name)
+        .bind(&pkg.version)
+        .bind(&pkg.requested_version)
+        .execute(&self.db)
+        .await
+        .context("failed to insert installed package into database")?;
         Ok(())
     }
 
@@ -319,10 +322,19 @@ mod tests {
         Ok(state)
     }
 
+    /// Returns a known package spec with the given name and version.
+    fn known_package(name: &str, version: &str) -> KnownPackageSpec {
+        KnownPackageSpec {
+            name: name.to_string(),
+            version: version.to_string(),
+            requested_version: version.to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn test_package_add_list_remove() {
         let state = State::load(":memory:").await.unwrap();
-        let spec = KnownPackageSpec::new("test-package", "0.1.0");
+        let spec = known_package("test-package", "0.1.0");
         state.add_installed_package(&spec).await.unwrap();
         let packages = state.installed_packages().await.unwrap();
         assert_eq!(packages.len(), 1);
@@ -336,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_package_refuses_same_version_twice() {
         let state = State::load(":memory:").await.unwrap();
-        let spec = KnownPackageSpec::new("test-package", "0.1.0");
+        let spec = known_package("test-package", "0.1.0");
         state.add_installed_package(&spec).await.unwrap();
         assert!(state.add_installed_package(&spec).await.is_err());
     }
@@ -344,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn test_is_package_installed() {
         let state = State::load(":memory:").await.unwrap();
-        let spec = KnownPackageSpec::new("test-package", "0.1.0");
+        let spec = known_package("test-package", "0.1.0");
         assert!(!state.is_package_installed(&spec).await.unwrap());
         state.add_installed_package(&spec).await.unwrap();
         assert!(state.is_package_installed(&spec).await.unwrap());

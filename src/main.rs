@@ -172,7 +172,7 @@ enum RegistryCommand {
 /// Installs a package.
 async fn install_package(state: &State, pkg: &str) -> Result<()> {
     let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let pkg = pkg
+    let pkg: KnownPackageSpec = pkg
         .resolve_known_version(state)
         .await
         .context("failed to resolve package version")?;

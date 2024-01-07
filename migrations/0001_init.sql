@@ -8,6 +8,7 @@ INSERT INTO meta (key, value) VALUES ('schema_version', '1');
 CREATE TABLE IF NOT EXISTS installed_packages (
     name TEXT NOT NULL,
     version TEXT NOT NULL,
+    requested_version TEXT NOT NULL,
     PRIMARY KEY (name, version)
 );
 
