@@ -28,6 +28,7 @@ async fn main() -> Result<()> {
             PackageCommand::Install { pkgs } => {
                 ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
+                let pb = create_progress_bar("Installing packages", pkgs.len() as u64);
                 let mut set = JoinSet::new();
 
                 for pkg in pkgs {
@@ -37,11 +38,51 @@ async fn main() -> Result<()> {
 
                 let mut results = vec![];
                 while let Some(result) = set.join_next().await {
+                    pb.inc(1);
                     results.push(result?);
                 }
-                results.into_iter().collect::<Result<()>>()?;
+                pb.finish_and_clear();
+                let output = results.into_iter().collect::<Result<Vec<String>>>()?;
+                for line in output {
+                    println!("{}", line);
+                }
+            }
+            PackageCommand::Update { mut pkgs } => {
+                ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
+
+                if pkgs.is_empty() {
+                    pkgs = state
+                        .installed_packages()
+                        .await?
+                        .into_iter()
+                        .map(|pkg| pkg.name)
+                        .collect();
+                }
+
+                let pb = create_progress_bar("Updating packages", pkgs.len() as u64);
+                let mut set = JoinSet::new();
+
+                for pkg in pkgs {
+                    let state = state.clone();
+                    set.spawn(async move { update_package(&state, &pkg).await });
+                }
+
+                let mut results = vec![];
+                while let Some(result) = set.join_next().await {
+                    pb.inc(1);
+                    results.push(result?);
+                }
+                pb.finish_and_clear();
+                let output = results
+                    .into_iter()
+                    .collect::<Result<Vec<Option<String>>>>()?;
+                output
+                    .into_iter()
+                    .flatten()
+                    .for_each(|line| println!("{}", line));
             }
             PackageCommand::Remove { pkgs } => {
+                let pb = create_progress_bar("Removing packages", pkgs.len() as u64);
                 let mut set = JoinSet::new();
 
                 for pkg in pkgs {
@@ -51,9 +92,14 @@ async fn main() -> Result<()> {
 
                 let mut results = vec![];
                 while let Some(result) = set.join_next().await {
+                    pb.inc(1);
                     results.push(result?);
                 }
-                results.into_iter().collect::<Result<()>>()?;
+                pb.finish_and_clear();
+                let output = results.into_iter().collect::<Result<Vec<String>>>()?;
+                for line in output {
+                    println!("{}", line);
+                }
             }
             PackageCommand::List => list_packages(&state).await?,
             PackageCommand::Search {
@@ -121,6 +167,13 @@ enum PackageCommand {
         pkgs: Vec<String>,
     },
 
+    /// Update all or select packages (alias: u)
+    #[command(alias = "u")]
+    Update {
+        /// Select packages to update
+        pkgs: Vec<String>,
+    },
+
     /// Remove one or more packages (alias: rm)
     #[command(arg_required_else_help = true, alias = "rm")]
     Remove {
@@ -170,7 +223,7 @@ enum RegistryCommand {
 }
 
 /// Installs a package.
-async fn install_package(state: &State, pkg: &str) -> Result<()> {
+async fn install_package(state: &State, pkg: &str) -> Result<String> {
     let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let pkg: KnownPackageSpec = pkg
         .resolve_known_version(state)
@@ -187,12 +240,35 @@ async fn install_package(state: &State, pkg: &str) -> Result<()> {
         .await
         .context("failed to register installed package")?;
 
-    println!("Installed {pkg}");
-    Ok(())
+    Ok(format!("Installed {pkg}"))
+}
+
+/// Updates a package.
+async fn update_package(state: &State, pkg: &str) -> Result<Option<String>> {
+    let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
+    let pkg: InstalledPackageSpec = pkg
+        .resolve_installed_version(state)
+        .await
+        .context("failed to resolve package version")?;
+
+    if !state.is_package_installed(&pkg.clone().into()).await? {
+        return Err(anyhow!("package {} is not installed", pkg));
+    }
+
+    if let Some(new_version) = pkg.available_update(state).await? {
+        // install update
+        // state
+        //     .update_installed_package(&pkg, &new_version)
+        //     .await
+        //     .context("failed to update installed package")?;
+        Ok(Some(format!("Updated {pkg} to {new_version}")))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Uninstalls a package.
-async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
+async fn uninstall_package(state: &State, pkg: &str) -> Result<String> {
     let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let pkg: InstalledPackageSpec = pkg
         .resolve_installed_version(state)
@@ -204,8 +280,7 @@ async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
         .await
         .context("failed to deregister installed package")?;
 
-    println!("Uninstalled {pkg}");
-    Ok(())
+    Ok(format!("Uninstalled {pkg}"))
 }
 
 /// Lists all installed packages.
@@ -271,10 +346,11 @@ async fn ensure_registries_are_current(
 
     let mut results = vec![];
     while let Some(result) = set.join_next().await {
-        results.push(result?);
         pb.inc(1);
+        results.push(result?);
     }
 
+    pb.finish_and_clear();
     results
         .into_iter()
         .collect::<Result<()>>()

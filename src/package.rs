@@ -156,6 +156,16 @@ impl Display for KnownPackageSpec {
     }
 }
 
+impl From<InstalledPackageSpec> for KnownPackageSpec {
+    fn from(spec: InstalledPackageSpec) -> Self {
+        Self {
+            name: spec.name,
+            version: spec.version,
+            requested_version: spec.requested_version,
+        }
+    }
+}
+
 /// A [`PackageRequest`] with a resolved version based on installed packages.
 #[derive(Clone, Debug, FromRow)]
 pub struct InstalledPackageSpec {
