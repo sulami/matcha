@@ -111,6 +111,9 @@ async fn main() -> Result<()> {
                 search_packages(&state, &query, all_versions).await?;
             }
         },
+        Command::Workspace(cmd) => {
+            todo!("workspace commands are not yet implemented");
+        }
         Command::Registry(cmd) => match cmd {
             RegistryCommand::Add { uri } => {
                 add_registry(&state, &uri, &DefaultFetcher).await?;
@@ -148,11 +151,15 @@ struct Cli {
 
 #[derive(Parser, Debug)]
 enum Command {
-    /// Manage packages
+    /// Manage packages (alias: pkg, p)
     #[command(subcommand, arg_required_else_help = true, alias = "pkg", alias = "p")]
     Package(PackageCommand),
 
-    /// Manage registries
+    /// Manage workspaces (alias: ws, w)
+    #[command(subcommand, arg_required_else_help = true, alias = "ws", alias = "w")]
+    Workspace(WorkspaceCommand),
+
+    /// Manage registries (alias: reg, r)
     #[command(subcommand, arg_required_else_help = true, alias = "reg", alias = "r")]
     Registry(RegistryCommand),
 }
@@ -196,6 +203,25 @@ enum PackageCommand {
         #[arg(long)]
         all_versions: bool,
     },
+}
+
+#[derive(Parser, Debug)]
+enum WorkspaceCommand {
+    /// Add a workspace (alias: a)
+    #[command(arg_required_else_help = true, alias = "a")]
+    Add { workspace: String },
+
+    /// Remove a workspace (alias: rm)
+    #[command(arg_required_else_help = true, alias = "rm")]
+    Remove { workspace: String },
+
+    /// List all workspaces (alias: ls)
+    #[command(alias = "ls")]
+    List,
+
+    /// Run a shell in the context of a workspace (alias: sh)
+    #[command(alias = "sh")]
+    Shell { workspace: String },
 }
 
 #[derive(Parser, Debug)]
