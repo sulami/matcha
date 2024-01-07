@@ -484,9 +484,17 @@ async fn search_packages(state: &State, query: &str, all_versions: bool) -> Resu
 
 /// Adds a workspace.
 async fn add_workspace(state: &State, name: &str) -> Result<()> {
+    if name
+        .chars()
+        .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+    {
+        return Err(anyhow!("workspace names can contain [a-zA-Z0-9-_] only"));
+    }
+
     if state.get_workspace(name).await?.is_some() {
         return Err(anyhow!("workspace {} already exists", name));
     }
+
     state.add_workspace(&Workspace::new(name)).await?;
     Ok(())
 }
@@ -748,5 +756,14 @@ mod tests {
             )
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_add_workspace_rejects_invalid_names() {
+        let state = State::load(":memory:").await.unwrap();
+        let name = "test!";
+
+        let result = add_workspace(&state, name).await;
+        assert!(result.is_err());
     }
 }
