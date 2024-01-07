@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use sqlx::FromRow;
 
 /// A place that can have packages installed.
@@ -19,5 +21,11 @@ impl Workspace {
 impl Default for Workspace {
     fn default() -> Self {
         Workspace::new("global")
+    }
+}
+
+impl Display for Workspace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
     }
 }

@@ -113,9 +113,20 @@ async fn main() -> Result<()> {
                 search_packages(&state, &query, all_versions).await?;
             }
         },
-        Command::Workspace(cmd) => {
-            todo!("workspace commands are not yet implemented");
-        }
+        Command::Workspace(cmd) => match cmd {
+            WorkspaceCommand::Add { workspace } => {
+                add_workspace(&state, &workspace).await?;
+            }
+            WorkspaceCommand::Remove { workspace } => {
+                remove_workspace(&state, &workspace).await?;
+            }
+            WorkspaceCommand::List => {
+                list_workspaces(&state).await?;
+            }
+            WorkspaceCommand::Shell { workspace } => {
+                todo!("workspace shells are not yet implemented");
+            }
+        },
         Command::Registry(cmd) => match cmd {
             RegistryCommand::Add { uri } => {
                 add_registry(&state, &uri, &DefaultFetcher).await?;
@@ -403,6 +414,38 @@ async fn search_packages(state: &State, query: &str, all_versions: bool) -> Resu
     Ok(())
 }
 
+/// Adds a workspace.
+async fn add_workspace(state: &State, name: &str) -> Result<()> {
+    if state.get_workspace(name).await?.is_some() {
+        return Err(anyhow!("workspace {} already exists", name));
+    }
+    state.add_workspace(&Workspace::new(name)).await?;
+    Ok(())
+}
+
+/// Removes a workspace.
+async fn remove_workspace(state: &State, name: &str) -> Result<()> {
+    if name == "global" {
+        return Err(anyhow!("cannot remove global workspace"));
+    }
+    if state.get_workspace(name).await?.is_none() {
+        return Err(anyhow!("workspace {} does not exist", name));
+    }
+    state.remove_workspace(name).await?;
+    Ok(())
+}
+
+/// Lists all workspaces.
+async fn list_workspaces(state: &State) -> Result<()> {
+    let workspaces = state.workspaces().await?;
+
+    for workspace in workspaces {
+        println!("{}", workspace);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,5 +567,56 @@ mod tests {
         let state = State::load(":memory:").await.unwrap();
         let result = remove_registry(&state, "foo").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_add_workspace() {
+        let state = State::load(":memory:").await.unwrap();
+        let name = "test";
+
+        add_workspace(&state, name).await.unwrap();
+        assert!(state
+            .workspaces()
+            .await
+            .unwrap()
+            .iter()
+            .any(|w| w.name == name));
+    }
+
+    #[tokio::test]
+    async fn test_add_workspace_refuses_same_name_twice() {
+        let state = State::load(":memory:").await.unwrap();
+        let name = "test";
+
+        add_workspace(&state, name).await.unwrap();
+        let result = add_workspace(&state, name).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_refuses_global() {
+        let state = State::load(":memory:").await.unwrap();
+        let name = "global";
+
+        let result = remove_workspace(&state, name).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_remove_workspace_refuses_nonexistent() {
+        let state = State::load(":memory:").await.unwrap();
+        let name = "test";
+
+        let result = remove_workspace(&state, name).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_workspaces() {
+        let state = State::load(":memory:").await.unwrap();
+        let name = "test";
+
+        add_workspace(&state, name).await.unwrap();
+        list_workspaces(&state).await.unwrap();
     }
 }
