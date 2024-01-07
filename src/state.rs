@@ -123,13 +123,23 @@ impl State {
     }
 
     /// Removes a package from the internal state.
-    pub async fn remove_installed_package(&self, pkg: &InstalledPackageSpec) -> Result<()> {
-        sqlx::query("DELETE FROM installed_packages WHERE name = ? AND version = ?")
-            .bind(&pkg.name)
-            .bind(&pkg.version)
-            .execute(&self.db)
-            .await
-            .context("failed to remove installed package from database")?;
+    pub async fn remove_installed_package(
+        &self,
+        pkg: &InstalledPackageSpec,
+        workspace: &Workspace,
+    ) -> Result<()> {
+        sqlx::query(
+            "DELETE FROM installed_packages
+                    WHERE name = $1
+                    AND version = $2
+                    AND workspace = $3",
+        )
+        .bind(&pkg.name)
+        .bind(&pkg.version)
+        .bind(&workspace.name)
+        .execute(&self.db)
+        .await
+        .context("failed to remove installed package from database")?;
         Ok(())
     }
 
@@ -411,7 +421,10 @@ mod tests {
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, spec.name);
         assert_eq!(packages[0].version, spec.version);
-        state.remove_installed_package(&spec.into()).await.unwrap();
+        state
+            .remove_installed_package(&spec.into(), &Workspace::default())
+            .await
+            .unwrap();
         let packages = state
             .installed_packages(&Workspace::default())
             .await

@@ -302,7 +302,7 @@ async fn uninstall_package(state: &State, pkg: &str) -> Result<String> {
         .context("failed to resolve package version")?;
 
     state
-        .remove_installed_package(&pkg_spec)
+        .remove_installed_package(&pkg_spec, &Workspace::default())
         .await
         .context("failed to deregister installed package")?;
 
