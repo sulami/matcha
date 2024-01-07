@@ -192,7 +192,7 @@ impl State {
                 reg.name.as_ref().unwrap()
             ));
         }
-        sqlx::query("INSERT INTO registries (name, uri) VALUES (?, ?)")
+        sqlx::query("INSERT INTO registries (name, uri) VALUES ($1, $2)")
             .bind(reg.name.as_ref().unwrap())
             .bind(reg.uri.to_string())
             .execute(&self.db)
@@ -226,7 +226,7 @@ impl State {
 
     /// Returns true if a registry with this name exists.
     pub async fn registry_exists_by_name(&self, name: &str) -> Result<bool> {
-        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE name = ?)")
+        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE name = $1)")
             .bind(name)
             .fetch_one(&self.db)
             .await
@@ -236,7 +236,7 @@ impl State {
 
     /// Returns true if a registry with this URI exists.
     pub async fn registry_exists_by_uri(&self, uri: &str) -> Result<bool> {
-        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE uri = ?)")
+        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE uri = $1)")
             .bind(uri)
             .fetch_one(&self.db)
             .await
@@ -249,7 +249,7 @@ impl State {
         if !self.registry_exists_by_uri(&reg.uri.to_string()).await? {
             return Err(anyhow!("registry {} does not exist", &reg.uri));
         }
-        sqlx::query("UPDATE registries SET name = ?, last_fetched = ? WHERE uri = ?")
+        sqlx::query("UPDATE registries SET name = $1, last_fetched = $2 WHERE uri = $3")
             .bind(&reg.name)
             .bind(reg.last_fetched)
             .bind(&reg.uri.to_string())
@@ -330,7 +330,7 @@ impl State {
     /// Returns all versions versions of a package, ordered newest to oldest.
     pub async fn known_package_versions(&self, name: &str) -> Result<Vec<String>> {
         let versions = sqlx::query_scalar(
-            "SELECT version FROM known_packages WHERE name = ? ORDER BY version DESC",
+            "SELECT version FROM known_packages WHERE name = $1 ORDER BY version DESC",
         )
         .bind(name)
         .fetch_all(&self.db)

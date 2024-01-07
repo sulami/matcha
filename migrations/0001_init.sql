@@ -12,9 +12,10 @@ CREATE TABLE IF NOT EXISTS installed_packages (
     requested_version TEXT NOT NULL,
     workspace TEXT NOT NULL DEFAULT 'global',
 
-    PRIMARY KEY (name, version)
+    PRIMARY KEY (name, version, workspace)
     FOREIGN KEY (workspace) REFERENCES workspaces (name) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS installed_packages_workspace ON installed_packages (workspace);
 
 CREATE TABLE IF NOT EXISTS registries (
     name TEXT NOT NULL,
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS known_packages (
     PRIMARY KEY (name, version),
     FOREIGN KEY (registry) REFERENCES registries (name) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS known_packages_registry ON known_packages (registry);
 
 CREATE TABLE IF NOT EXISTS workspaces (
     name TEXT NOT NULL,
