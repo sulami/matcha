@@ -9,10 +9,12 @@ pub(crate) mod registry;
 pub(crate) mod state;
 pub(crate) mod ui;
 
-use package::Package;
+use package::PackageRequest;
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use ui::create_progress_bar;
+
+use crate::package::PackageSpec;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -169,15 +171,15 @@ enum RegistryCommand {
 
 /// Installs a package.
 async fn install_package(state: &State, pkg: &str) -> Result<()> {
-    let mut pkg = pkg.parse().context("failed to parse package name")?;
+    let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
+    let pkg = pkg
+        .resolve_known_version(state)
+        .await
+        .context("failed to resolve package version")?;
 
     if state.is_package_installed(&pkg).await? {
         return Err(anyhow!("package {} is already installed", pkg));
     }
-
-    pkg.resolve_known_version(state)
-        .await
-        .context("failed to resolve package version")?;
 
     // TODO: Deal with rollbacks for failed installs.
     state
@@ -191,8 +193,9 @@ async fn install_package(state: &State, pkg: &str) -> Result<()> {
 
 /// Uninstalls a package.
 async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
-    let mut pkg: Package = pkg.parse().context("failed to parse package name")?;
-    pkg.resolve_installed_version(state)
+    let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
+    let pkg: PackageSpec = pkg
+        .resolve_installed_version(state)
         .await
         .context("failed to resolve package version")?;
 
@@ -314,13 +317,11 @@ mod tests {
     #[tokio::test]
     async fn test_install_package() {
         let state = setup_state_with_registry().await.unwrap();
-        let pkg = "test-package@0.1.0";
+        let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
+        let pkg: PackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
-        install_package(&state, pkg).await.unwrap();
-        assert!(state
-            .is_package_installed(&pkg.parse().unwrap())
-            .await
-            .unwrap());
+        install_package(&state, &pkg.name).await.unwrap();
+        assert!(state.is_package_installed(&pkg).await.unwrap());
     }
 
     #[tokio::test]
@@ -336,14 +337,12 @@ mod tests {
     #[tokio::test]
     async fn test_uninstall_package() {
         let state = setup_state_with_registry().await.unwrap();
-        let pkg = "test-package@0.1.0";
+        let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
+        let pkg: PackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
-        install_package(&state, pkg).await.unwrap();
-        uninstall_package(&state, pkg).await.unwrap();
-        assert!(!state
-            .is_package_installed(&pkg.parse().unwrap())
-            .await
-            .unwrap());
+        install_package(&state, &pkg.name).await.unwrap();
+        uninstall_package(&state, &pkg.name).await.unwrap();
+        assert!(!state.is_package_installed(&pkg).await.unwrap());
     }
 
     #[tokio::test]

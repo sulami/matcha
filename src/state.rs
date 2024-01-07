@@ -7,7 +7,7 @@ use sqlx::{
 };
 use tokio::fs::create_dir_all;
 
-use crate::{manifest::Package as ManifestPackage, package::Package, registry::Registry};
+use crate::{manifest::Package, package::PackageSpec, registry::Registry};
 
 /// The internal state of the application, backed by a SQLite database.
 #[derive(Clone)]
@@ -82,19 +82,17 @@ impl State {
     }
 
     /// Returns all installed packages.
-    pub async fn installed_packages(&self) -> Result<Vec<Package>> {
-        let packages = sqlx::query_as::<_, Package>("SELECT name, version FROM installed_packages")
-            .fetch_all(&self.db)
-            .await
-            .context("failed to fetch installed packages from database")?;
+    pub async fn installed_packages(&self) -> Result<Vec<PackageSpec>> {
+        let packages =
+            sqlx::query_as::<_, PackageSpec>("SELECT name, version FROM installed_packages")
+                .fetch_all(&self.db)
+                .await
+                .context("failed to fetch installed packages from database")?;
         Ok(packages)
     }
 
     /// Adds a package to the internal state.
-    pub async fn add_installed_package(&self, pkg: &Package) -> Result<()> {
-        if !pkg.is_fully_qualified() {
-            return Err(anyhow!("package {} is not fully qualified", pkg));
-        }
+    pub async fn add_installed_package(&self, pkg: &PackageSpec) -> Result<()> {
         sqlx::query("INSERT INTO installed_packages (name, version) VALUES (?, ?)")
             .bind(&pkg.name)
             .bind(&pkg.version)
@@ -105,10 +103,7 @@ impl State {
     }
 
     /// Removes a package from the internal state.
-    pub async fn remove_installed_package(&self, pkg: &Package) -> Result<()> {
-        if !pkg.is_fully_qualified() {
-            return Err(anyhow!("package {} is not fully qualified", pkg));
-        }
+    pub async fn remove_installed_package(&self, pkg: &PackageSpec) -> Result<()> {
         sqlx::query("DELETE FROM installed_packages WHERE name = ? AND version = ?")
             .bind(&pkg.name)
             .bind(&pkg.version)
@@ -119,29 +114,21 @@ impl State {
     }
 
     /// Returns whether a package is installed or not.
-    ///
-    /// If the package version is not specified, this will return `true`
-    /// if any version of the package is installed.
-    pub async fn is_package_installed(&self, pkg: &Package) -> Result<bool> {
-        if pkg.is_fully_qualified() {
-            // Find this specific version.
-            Ok(self
-                .installed_package_versions(pkg)
-                .await?
-                .iter()
-                .any(|v| v == pkg.version.as_ref().unwrap()))
-        } else {
-            // Find any version.
-            Ok(!self.installed_package_versions(pkg).await?.is_empty())
-        }
+    pub async fn is_package_installed(&self, pkg: &PackageSpec) -> Result<bool> {
+        // TODO: This could be a direct query instead of getting all installed versions.
+        Ok(self
+            .installed_package_versions(&pkg.name)
+            .await?
+            .iter()
+            .any(|v| v == &pkg.version))
     }
 
     /// Returns all installed versions of a package, ordered newest to oldest.
-    pub async fn installed_package_versions(&self, pkg: &Package) -> Result<Vec<String>> {
+    pub async fn installed_package_versions(&self, name: &str) -> Result<Vec<String>> {
         let versions = sqlx::query_scalar(
             "SELECT version FROM installed_packages WHERE name = ? ORDER BY version DESC",
         )
-        .bind(&pkg.name)
+        .bind(name)
         .fetch_all(&self.db)
         .await
         .context("failed to fetch installed package versions from database")?;
@@ -230,7 +217,7 @@ impl State {
     }
 
     /// Adds known packages to the database.
-    pub async fn add_known_packages(&self, pkgs: &[ManifestPackage]) -> Result<()> {
+    pub async fn add_known_packages(&self, pkgs: &[Package]) -> Result<()> {
         for pkg in pkgs {
             sqlx::query(
                 "INSERT INTO known_packages
@@ -258,9 +245,9 @@ impl State {
     }
 
     /// Searches known packages for a query.
-    pub async fn search_known_packages(&self, query: &str) -> Result<Vec<ManifestPackage>> {
+    pub async fn search_known_packages(&self, query: &str) -> Result<Vec<Package>> {
         let query = format!("%{}%", query);
-        let pkgs = sqlx::query_as::<_, ManifestPackage>(
+        let pkgs = sqlx::query_as::<_, Package>(
             r"SELECT *
                 FROM known_packages
                 WHERE name LIKE $1
@@ -276,12 +263,9 @@ impl State {
     }
 
     /// Searches know packages for a query, returning only the latest version of each package.
-    pub async fn search_known_packages_latest_only(
-        &self,
-        query: &str,
-    ) -> Result<Vec<ManifestPackage>> {
+    pub async fn search_known_packages_latest_only(&self, query: &str) -> Result<Vec<Package>> {
         let query = format!("%{}%", query);
-        let pkgs = sqlx::query_as::<_, ManifestPackage>(
+        let pkgs = sqlx::query_as::<_, Package>(
             r"SELECT *
             FROM (
                 SELECT *
@@ -301,30 +285,15 @@ impl State {
     }
 
     /// Returns all versions versions of a package, ordered newest to oldest.
-    pub async fn known_package_versions(&self, pkg: &Package) -> Result<Vec<String>> {
+    pub async fn known_package_versions(&self, name: &str) -> Result<Vec<String>> {
         let versions = sqlx::query_scalar(
             "SELECT version FROM known_packages WHERE name = ? ORDER BY version DESC",
         )
-        .bind(&pkg.name)
+        .bind(name)
         .fetch_all(&self.db)
         .await
         .context("failed to fetch known package versions from database")?;
         Ok(versions)
-    }
-
-    /// Returns whether a package is known or not.
-    pub async fn is_package_known(&self, pkg: &Package) -> Result<bool> {
-        if pkg.is_fully_qualified() {
-            // Find this specific version.
-            Ok(self
-                .known_package_versions(pkg)
-                .await?
-                .iter()
-                .any(|v| v == pkg.version.as_ref().unwrap()))
-        } else {
-            // Find any version.
-            Ok(!self.known_package_versions(pkg).await?.is_empty())
-        }
     }
 }
 
@@ -348,24 +317,13 @@ mod tests {
     #[tokio::test]
     async fn test_package_add_list_remove() {
         let state = State::load(":memory:").await.unwrap();
-        state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
-            .await
-            .unwrap();
+        let spec = PackageSpec::new("test-package", "0.1.0");
+        state.add_installed_package(&spec).await.unwrap();
         let packages = state.installed_packages().await.unwrap();
         assert_eq!(packages.len(), 1);
-        assert_eq!(packages[0].name, "foo");
-        assert_eq!(packages[0].version, Some("1.0.0".to_string()));
-        state
-            .remove_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
-            .await
-            .unwrap();
+        assert_eq!(packages[0].name, spec.name);
+        assert_eq!(packages[0].version, spec.version);
+        state.remove_installed_package(&spec).await.unwrap();
         let packages = state.installed_packages().await.unwrap();
         assert!(packages.is_empty());
     }
@@ -373,58 +331,18 @@ mod tests {
     #[tokio::test]
     async fn test_add_package_refuses_same_version_twice() {
         let state = State::load(":memory:").await.unwrap();
-        state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
-            .await
-            .unwrap();
-        assert!(state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_remove_package_refuses_unqualified_version() {
-        let state = State::load(":memory:").await.unwrap();
-        assert!(state
-            .remove_installed_package(&Package {
-                name: "foo".to_string(),
-                version: None,
-            })
-            .await
-            .is_err());
+        let spec = PackageSpec::new("test-package", "0.1.0");
+        state.add_installed_package(&spec).await.unwrap();
+        assert!(state.add_installed_package(&spec).await.is_err());
     }
 
     #[tokio::test]
     async fn test_is_package_installed() {
         let state = State::load(":memory:").await.unwrap();
-        assert!(!state
-            .is_package_installed(&Package {
-                name: "foo".to_string(),
-                version: None,
-            })
-            .await
-            .unwrap());
-        state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
-            .await
-            .unwrap();
-        assert!(state
-            .is_package_installed(&Package {
-                name: "foo".to_string(),
-                version: None,
-            })
-            .await
-            .unwrap());
+        let spec = PackageSpec::new("test-package", "0.1.0");
+        assert!(!state.is_package_installed(&spec).await.unwrap());
+        state.add_installed_package(&spec).await.unwrap();
+        assert!(state.is_package_installed(&spec).await.unwrap());
     }
 
     #[tokio::test]
@@ -488,7 +406,7 @@ mod tests {
         let state = setup_state_with_registry().await.unwrap();
 
         let pkgs = vec![
-            ManifestPackage {
+            Package {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
@@ -496,7 +414,7 @@ mod tests {
                 registry: "test".to_string(),
                 ..Default::default()
             },
-            ManifestPackage {
+            Package {
                 name: "bar".to_string(),
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
@@ -504,7 +422,7 @@ mod tests {
                 registry: "test".to_string(),
                 ..Default::default()
             },
-            ManifestPackage {
+            Package {
                 name: "baz".to_string(),
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
@@ -531,7 +449,7 @@ mod tests {
         let state = setup_state_with_registry().await.unwrap();
 
         let pkgs = vec![
-            ManifestPackage {
+            Package {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
@@ -539,7 +457,7 @@ mod tests {
                 registry: "test".to_string(),
                 ..Default::default()
             },
-            ManifestPackage {
+            Package {
                 name: "bar".to_string(),
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
@@ -547,7 +465,7 @@ mod tests {
                 registry: "test".to_string(),
                 ..Default::default()
             },
-            ManifestPackage {
+            Package {
                 name: "foo".to_string(),
                 version: "1.0.1".to_string(),
                 description: Some("A test package".to_string()),
@@ -576,7 +494,7 @@ mod tests {
     async fn test_add_known_packages_updates_existing() {
         let state = setup_state_with_registry().await.unwrap();
 
-        let pkgs = vec![ManifestPackage {
+        let pkgs = vec![Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
             description: Some("A test package".to_string()),

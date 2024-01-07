@@ -1,90 +1,79 @@
 use std::{fmt::Display, str::FromStr};
 
 use anyhow::{anyhow, Error, Result};
+use sqlx::FromRow;
 
 use crate::state::State;
 
-/// A package.
-#[derive(Clone, Debug, sqlx::FromRow)]
-pub struct Package {
+/// A package name and maybe a version, which needs resolution in some context.
+#[derive(Clone, Debug)]
+pub struct PackageRequest {
     /// The name of the package.
     pub name: String,
     /// The version of the package.
-    ///
-    /// This can be `None` if the package has not been parsed with a version.
     pub version: Option<String>,
 }
 
-impl Package {
-    pub fn is_fully_qualified(&self) -> bool {
-        if let Some(version) = &self.version {
-            version != "latest"
-        } else {
-            false
-        }
-    }
-
+impl PackageRequest {
     /// If the version isn't fully qualified, resolves it to the latest installed one.
     ///
     /// Returns an error if the package is either not installed,
     /// or if multiple versions of the package are installed.
-    pub async fn resolve_installed_version(&mut self, state: &State) -> Result<()> {
-        let installed_versions = state.installed_package_versions(self).await?;
+    pub async fn resolve_installed_version(&self, state: &State) -> Result<PackageSpec> {
+        let installed_versions = state.installed_package_versions(&self.name).await?;
 
-        if !self.is_fully_qualified() {
-            if installed_versions.is_empty() {
-                return Err(anyhow!("package {} is not installed", self));
-            }
-            if installed_versions.len() > 1 {
-                return Err(anyhow!(
-                    "multiple versions of package {} are installed: {}",
-                    self.name,
-                    installed_versions.join(", ")
-                ));
-            }
-            self.version = Some(installed_versions.first().unwrap().clone());
-        } else if !state.is_package_installed(self).await? {
-            if installed_versions.is_empty() {
-                return Err(anyhow!("package {} is not installed", self));
-            } else {
-                return Err(anyhow!(
-                    "package {} is not installed, but these versions are: {}",
-                    self,
-                    installed_versions.join(", ")
-                ));
-            }
+        if installed_versions.is_empty() {
+            return Err(anyhow!("package {} is not installed", self));
         }
-        Ok(())
+
+        if installed_versions.len() > 1 {
+            return Err(anyhow!(
+                "package {} is installed in multiple versions: {}",
+                self,
+                installed_versions.join(", ")
+            ));
+        }
+
+        let Some(resolved) = find_matching_version(
+            &installed_versions,
+            self.version.as_deref().unwrap_or_default(),
+        ) else {
+            return Err(anyhow!(
+                "package {} is not installed, but these versions are: {}",
+                self,
+                installed_versions.join(", ")
+            ));
+        };
+
+        Ok(PackageSpec::new(&self.name, &resolved))
     }
 
     /// If the version isn't fully qualified, resolves it to the latest known one.
     ///
     /// Returns an error if the package is not known.
-    /// If multiple versions of the package are known, the first (latest) one is used.
-    pub async fn resolve_known_version(&mut self, state: &State) -> Result<()> {
-        let known_versions = state.known_package_versions(self).await?;
+    /// If multiple versions of the package are known, the first (latest) one that matches is used.
+    pub async fn resolve_known_version(&self, state: &State) -> Result<PackageSpec> {
+        let known_versions = state.known_package_versions(&self.name).await?;
 
-        if !self.is_fully_qualified() {
-            if known_versions.is_empty() {
-                return Err(anyhow!("package {} is not known", self));
-            }
-            self.version = Some(known_versions.first().unwrap().clone());
-        } else if !state.is_package_known(self).await? {
-            if known_versions.is_empty() {
-                return Err(anyhow!("package {} is not known", self));
-            } else {
-                return Err(anyhow!(
-                    "package {} is not known, but these versions are: {}",
-                    self,
-                    known_versions.join(", ")
-                ));
-            }
+        if known_versions.is_empty() {
+            return Err(anyhow!("package {} is not known", self));
         }
-        Ok(())
+
+        let Some(resolved) =
+            find_matching_version(&known_versions, self.version.as_deref().unwrap_or_default())
+        else {
+            return Err(anyhow!(
+                "package {} is not known, but these versions are: {}",
+                self,
+                known_versions.join(", ")
+            ));
+        };
+
+        Ok(PackageSpec::new(&self.name, &resolved))
     }
 }
 
-impl Display for Package {
+impl Display for PackageRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name)?;
         if let Some(version) = &self.version {
@@ -94,7 +83,7 @@ impl Display for Package {
     }
 }
 
-impl FromStr for Package {
+impl FromStr for PackageRequest {
     type Err = Error;
 
     /// Parses a package name and version from a string.
@@ -113,12 +102,54 @@ impl FromStr for Package {
     }
 }
 
-impl From<crate::manifest::Package> for Package {
+impl From<crate::manifest::Package> for PackageRequest {
     fn from(pkg: crate::manifest::Package) -> Self {
         Self {
             name: pkg.name,
             version: Some(pkg.version),
         }
+    }
+}
+
+/// Returns the first version in `haystack` that starts with `needle`.
+///
+/// Considers that for e.g. semantic versioning, "1" does not match "10.0.0".
+/// If `needle` is empty, returns the first version in `haystack`.
+fn find_matching_version(haystack: &[String], needle: &str) -> Option<String> {
+    if needle.is_empty() {
+        return haystack.first().cloned();
+    }
+    haystack
+        .iter()
+        .find(|v| {
+            v.starts_with(needle)
+                && (v.len() == needle.len() || !v.as_bytes()[needle.len()].is_ascii_digit())
+        })
+        .cloned()
+}
+
+/// A [`PackageRequest`] with a resolved version in some context (known/installed).
+#[derive(Clone, Debug, FromRow)]
+pub struct PackageSpec {
+    /// The name of the package.
+    pub name: String,
+    /// The resolved version of the package.
+    pub version: String,
+}
+
+impl PackageSpec {
+    /// Returns a new [`PackageSpec`] with the given name and version.
+    pub fn new(name: &str, version: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            version: version.to_string(),
+        }
+    }
+}
+
+impl Display for PackageSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.version)
     }
 }
 
@@ -133,46 +164,34 @@ mod tests {
 
     #[test]
     fn test_parse_package() {
-        let pkg: Package = "foo".parse().unwrap();
+        let pkg: PackageRequest = "foo".parse().unwrap();
         assert_eq!(pkg.name, "foo");
         assert_eq!(pkg.version, None);
 
-        let pkg: Package = "foo@latest".parse().unwrap();
+        let pkg: PackageRequest = "foo@latest".parse().unwrap();
         assert_eq!(pkg.name, "foo");
         assert_eq!(pkg.version, Some("latest".to_string()));
 
-        let pkg: Package = "foo@1.2.3".parse().unwrap();
+        let pkg: PackageRequest = "foo@1.2.3".parse().unwrap();
         assert_eq!(pkg.name, "foo");
         assert_eq!(pkg.version, Some("1.2.3".to_string()));
     }
 
     #[test]
-    fn test_is_fully_qualified() {
-        let pkg: Package = "foo".parse().unwrap();
-        assert!(!pkg.is_fully_qualified());
-
-        let pkg: Package = "foo@latest".parse().unwrap();
-        assert!(!pkg.is_fully_qualified());
-
-        let pkg: Package = "foo@1.2.3".parse().unwrap();
-        assert!(pkg.is_fully_qualified());
-    }
-
-    #[test]
     fn test_display() {
-        let pkg: Package = "foo".parse().unwrap();
+        let pkg: PackageRequest = "foo".parse().unwrap();
         assert_eq!(pkg.to_string(), "foo");
 
-        let pkg: Package = "foo@latest".parse().unwrap();
+        let pkg: PackageRequest = "foo@latest".parse().unwrap();
         assert_eq!(pkg.to_string(), "foo@latest");
 
-        let pkg: Package = "foo@1.2.3".parse().unwrap();
+        let pkg: PackageRequest = "foo@1.2.3".parse().unwrap();
         assert_eq!(pkg.to_string(), "foo@1.2.3");
     }
 
     #[test]
     fn test_from_manifest_package() {
-        let pkg: Package = crate::manifest::Package {
+        let pkg: PackageRequest = crate::manifest::Package {
             name: "foo".to_string(),
             version: "1.2.3".to_string(),
             registry: "test".to_string(),
@@ -187,24 +206,21 @@ mod tests {
     async fn test_resolve_version() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
+            .add_installed_package(&PackageSpec::new("foo", "1.0.0"))
             .await
             .unwrap();
-        let mut pkg = Package {
+        let pkg = PackageRequest {
             name: "foo".to_string(),
             version: None,
         };
-        pkg.resolve_installed_version(&state).await.unwrap();
-        assert_eq!(pkg.version, Some("1.0.0".to_string()));
+        let spec = pkg.resolve_installed_version(&state).await.unwrap();
+        assert_eq!(spec.version, "1.0.0");
     }
 
     #[tokio::test]
     async fn test_resolve_version_fails_if_not_installed() {
         let state = State::load(":memory:").await.unwrap();
-        let mut pkg = Package {
+        let pkg = PackageRequest {
             name: "foo".to_string(),
             version: None,
         };
@@ -215,37 +231,28 @@ mod tests {
     async fn test_resolve_version_fails_if_this_version_is_not_installed() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
+            .add_installed_package(&PackageSpec::new("foo", "1.0.0"))
             .await
             .unwrap();
-        let mut pkg = Package {
+        let pkg = PackageRequest {
             name: "foo".to_string(),
-            version: Some("2.0.0".to_string()),
+            version: Some("2".to_string()),
         };
         assert!(pkg.resolve_installed_version(&state).await.is_err());
     }
 
     #[tokio::test]
-    async fn test_resolve_installed_package_version_fails_if_multiple_installed() {
+    async fn test_resolve_installed_package_version_fails_if_multiple_matches_installed() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
+            .add_installed_package(&PackageSpec::new("foo", "1.0.0"))
             .await
             .unwrap();
         state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("2.0.0".to_string()),
-            })
+            .add_installed_package(&PackageSpec::new("foo", "2.0.0"))
             .await
             .unwrap();
-        let mut pkg = Package {
+        let pkg = PackageRequest {
             name: "foo".to_string(),
             version: None,
         };
@@ -267,18 +274,18 @@ mod tests {
             }])
             .await
             .unwrap();
-        let mut pkg = Package {
+        let pkg = PackageRequest {
             name: "foo".to_string(),
             version: None,
         };
-        pkg.resolve_known_version(&state).await.unwrap();
-        assert_eq!(pkg.version, Some("1.0.0".to_string()));
+        let spec = pkg.resolve_known_version(&state).await.unwrap();
+        assert_eq!(spec.version, "1.0.0");
     }
 
     #[tokio::test]
     async fn test_resolve_known_version_fails_if_not_known() {
         let state = State::load(":memory:").await.unwrap();
-        let mut pkg = Package {
+        let pkg = PackageRequest {
             name: "foo".to_string(),
             version: None,
         };
@@ -289,16 +296,42 @@ mod tests {
     async fn test_resolve_known_version_fails_if_this_version_is_not_known() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&Package {
-                name: "foo".to_string(),
-                version: Some("1.0.0".to_string()),
-            })
+            .add_installed_package(&PackageSpec::new("foo", "1.0.0"))
             .await
             .unwrap();
-        let mut pkg = Package {
+        let pkg = PackageRequest {
             name: "foo".to_string(),
             version: Some("2.0.0".to_string()),
         };
         assert!(pkg.resolve_known_version(&state).await.is_err());
+    }
+
+    #[test]
+    fn test_find_matching_version() {
+        // Varying levels of precision matches.
+        assert_eq!(
+            find_matching_version(&["1.0.0".to_string()], "1"),
+            Some("1.0.0".to_string())
+        );
+        assert_eq!(
+            find_matching_version(&["1.0.0".to_string()], "1.0"),
+            Some("1.0.0".to_string())
+        );
+        assert_eq!(
+            find_matching_version(&["1.0.0".to_string()], "1.0.0"),
+            Some("1.0.0".to_string())
+        );
+        // No match.
+        assert_eq!(find_matching_version(&["1.0.1".to_string()], "1.0.0"), None);
+        // Not matching newer versions with same prefix.
+        assert_eq!(
+            find_matching_version(&["1.0.0".to_string(), "10.0.0".to_string()], "1"),
+            Some("1.0.0".to_string())
+        );
+        // Empty needle matches the first version.
+        assert_eq!(
+            find_matching_version(&["1.0.0".to_string(), "10.0.0".to_string()], ""),
+            Some("1.0.0".to_string())
+        );
     }
 }
