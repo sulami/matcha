@@ -354,18 +354,18 @@ async fn update_package(
 ) -> Result<Option<String>> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let workspace = get_create_workspace(state, workspace).await?;
-    let pkg_spec: InstalledPackageSpec = pkg_req
+    let existing_pkg = pkg_req
         .resolve_installed_version(state, &workspace)
         .await
         .context("failed to resolve package version")?;
 
-    if let Some(new_version) = pkg_spec.available_update(state).await? {
-        // install update
-        // state
-        //     .update_installed_package(&pkg, &new_version)
-        //     .await
-        //     .context("failed to update installed package")?;
-        Ok(Some(format!("Updated {pkg_spec} to {new_version}")))
+    if let Some(new_pkg) = existing_pkg.available_update(state).await? {
+        // Install the new version
+        state.get_package(&new_pkg).await?.build(&workspace).await?;
+        // Remove the old one
+        // TODO: For this I'll need a way to figure out which files belong to this package.
+        // existing_pkg.remove(&state, &workspace).await?;
+        Ok(Some(format!("Updated {existing_pkg} to {new_pkg}")))
     } else {
         Ok(None)
     }
