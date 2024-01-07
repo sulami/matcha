@@ -3,7 +3,7 @@ use std::{fmt::Display, str::FromStr};
 use anyhow::{anyhow, Error, Result};
 use sqlx::FromRow;
 
-use crate::state::State;
+use crate::{state::State, workspace::Workspace};
 
 /// A package name and maybe a version, which needs resolution in some context.
 #[derive(Clone, Debug)]
@@ -19,8 +19,14 @@ impl PackageRequest {
     ///
     /// Returns an error if the package is either not installed,
     /// or if multiple versions of the package are installed.
-    pub async fn resolve_installed_version(&self, state: &State) -> Result<InstalledPackageSpec> {
-        let installed_versions = state.installed_package_versions(&self.name).await?;
+    pub async fn resolve_installed_version(
+        &self,
+        state: &State,
+        workspace: &Workspace,
+    ) -> Result<InstalledPackageSpec> {
+        let installed_versions = state
+            .installed_package_versions(&self.name, workspace)
+            .await?;
 
         if installed_versions.is_empty() {
             return Err(anyhow!("package {} is not installed", self));
@@ -295,7 +301,10 @@ mod tests {
             name: "foo".to_string(),
             version: None,
         };
-        let spec = pkg.resolve_installed_version(&state).await.unwrap();
+        let spec = pkg
+            .resolve_installed_version(&state, &Workspace::default())
+            .await
+            .unwrap();
         assert_eq!(spec.version, "1.0.0");
     }
 
@@ -306,7 +315,10 @@ mod tests {
             name: "foo".to_string(),
             version: None,
         };
-        assert!(pkg.resolve_installed_version(&state).await.is_err());
+        assert!(pkg
+            .resolve_installed_version(&state, &Workspace::default())
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -320,7 +332,10 @@ mod tests {
             name: "foo".to_string(),
             version: Some("2".to_string()),
         };
-        assert!(pkg.resolve_installed_version(&state).await.is_err());
+        assert!(pkg
+            .resolve_installed_version(&state, &Workspace::default())
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -338,7 +353,10 @@ mod tests {
             name: "foo".to_string(),
             version: None,
         };
-        assert!(pkg.resolve_installed_version(&state).await.is_err());
+        assert!(pkg
+            .resolve_installed_version(&state, &Workspace::default())
+            .await
+            .is_err());
     }
 
     #[tokio::test]

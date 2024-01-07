@@ -144,21 +144,34 @@ impl State {
     }
 
     /// Returns whether a package is installed or not.
-    pub async fn is_package_installed(&self, pkg: &KnownPackageSpec) -> Result<bool> {
+    pub async fn is_package_installed(
+        &self,
+        pkg: &KnownPackageSpec,
+        workspace: &Workspace,
+    ) -> Result<bool> {
         // TODO: This could be a direct query instead of getting all installed versions.
         Ok(self
-            .installed_package_versions(&pkg.name)
+            .installed_package_versions(&pkg.name, workspace)
             .await?
             .iter()
             .any(|v| v == &pkg.version))
     }
 
     /// Returns all installed versions of a package, ordered newest to oldest.
-    pub async fn installed_package_versions(&self, name: &str) -> Result<Vec<String>> {
+    pub async fn installed_package_versions(
+        &self,
+        name: &str,
+        workspace: &Workspace,
+    ) -> Result<Vec<String>> {
         let versions = sqlx::query_scalar(
-            "SELECT version FROM installed_packages WHERE name = ? ORDER BY version DESC",
+            "SELECT version
+            FROM installed_packages
+            WHERE name = $1
+            AND workspace = $2
+            ORDER BY version DESC",
         )
         .bind(name)
+        .bind(&workspace.name)
         .fetch_all(&self.db)
         .await
         .context("failed to fetch installed package versions from database")?;
@@ -450,12 +463,18 @@ mod tests {
     async fn test_is_package_installed() {
         let state = State::load(":memory:").await.unwrap();
         let spec = known_package("test-package", "0.1.0");
-        assert!(!state.is_package_installed(&spec).await.unwrap());
+        assert!(!state
+            .is_package_installed(&spec, &Workspace::default())
+            .await
+            .unwrap());
         state
             .add_installed_package(&spec, &Workspace::default())
             .await
             .unwrap();
-        assert!(state.is_package_installed(&spec).await.unwrap());
+        assert!(state
+            .is_package_installed(&spec, &Workspace::default())
+            .await
+            .unwrap());
     }
 
     #[tokio::test]

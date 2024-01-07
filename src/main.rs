@@ -258,7 +258,10 @@ async fn install_package(state: &State, pkg: &str) -> Result<String> {
         .await
         .context("failed to resolve package version")?;
 
-    if state.is_package_installed(&pkg_spec).await? {
+    if state
+        .is_package_installed(&pkg_spec, &Workspace::default())
+        .await?
+    {
         return Err(anyhow!("package {} is already installed", pkg));
     }
 
@@ -277,7 +280,7 @@ async fn install_package(state: &State, pkg: &str) -> Result<String> {
 async fn update_package(state: &State, pkg: &str) -> Result<Option<String>> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let pkg_spec: InstalledPackageSpec = pkg_req
-        .resolve_installed_version(state)
+        .resolve_installed_version(state, &Workspace::default())
         .await
         .context("failed to resolve package version")?;
 
@@ -297,7 +300,7 @@ async fn update_package(state: &State, pkg: &str) -> Result<Option<String>> {
 async fn uninstall_package(state: &State, pkg: &str) -> Result<String> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let pkg_spec: InstalledPackageSpec = pkg_req
-        .resolve_installed_version(state)
+        .resolve_installed_version(state, &Workspace::default())
         .await
         .context("failed to resolve package version")?;
 
@@ -423,7 +426,10 @@ mod tests {
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
         install_package(&state, &pkg.name).await.unwrap();
-        assert!(state.is_package_installed(&pkg).await.unwrap());
+        assert!(state
+            .is_package_installed(&pkg, &Workspace::default())
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -444,7 +450,10 @@ mod tests {
 
         install_package(&state, &pkg.name).await.unwrap();
         uninstall_package(&state, &pkg.name).await.unwrap();
-        assert!(!state.is_package_installed(&pkg).await.unwrap());
+        assert!(!state
+            .is_package_installed(&pkg, &Workspace::default())
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
