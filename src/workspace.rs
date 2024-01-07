@@ -1,7 +1,9 @@
-use std::{fmt::Display, path::Path};
+use std::fmt::Display;
 
 use anyhow::{Context, Result};
 use sqlx::FromRow;
+
+use crate::WORKSPACE_DIRECTORY;
 
 /// A place that can have packages installed.
 #[derive(Debug, Clone, FromRow)]
@@ -19,7 +21,10 @@ impl Workspace {
     }
 
     /// Creates the directory for the workspace, if it doesn't exist.
-    pub async fn ensure_exists(&self, workspace_directory: &Path) -> Result<()> {
+    pub async fn ensure_exists(&self) -> Result<()> {
+        let workspace_directory = WORKSPACE_DIRECTORY
+            .get()
+            .context("workspace directory not initialized")?;
         tokio::fs::create_dir_all(workspace_directory.join(&self.name))
             .await
             .context("failed to create workspace root")?;

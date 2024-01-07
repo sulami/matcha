@@ -917,6 +917,7 @@ dependencies = [
  "clap",
  "futures-util",
  "indicatif",
+ "once_cell",
  "reqwest",
  "serde",
  "shellexpand",
