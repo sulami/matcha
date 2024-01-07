@@ -1,8 +1,14 @@
 use std::{fmt::Display, str::FromStr};
 
-use anyhow::Error;
+use anyhow::{anyhow, Context, Error, Result};
+use futures_util::StreamExt;
 use serde::{Deserialize, Deserializer};
 use sqlx::{types::Json, FromRow};
+use tempfile::TempDir;
+use tokio::{fs::File, io::AsyncWriteExt, process::Command};
+use url::Url;
+
+use crate::{download::download_stream, workspace::Workspace};
 
 /// Manifest metadata.
 #[derive(Debug, Default)]
@@ -17,29 +23,6 @@ pub struct Manifest {
     pub description: Option<String>,
     /// Packages in this manifest.
     pub packages: Vec<Package>,
-}
-
-/// A package, as described by a registry manifest.
-#[derive(Debug, FromRow, Deserialize, Default)]
-pub struct Package {
-    /// The name of the package.
-    pub name: String,
-    /// The version of the package.
-    pub version: String,
-    /// The description of the package.
-    pub description: Option<String>,
-    /// The homepage of the package.
-    pub homepage: Option<String>,
-    /// The license of the package.
-    pub license: Option<String>,
-    /// The source of the package. Can be `None` for meta packages.
-    pub source: Option<String>,
-    /// The build command of the package.
-    pub build: Option<String>,
-    /// The artifacts of the package after building.
-    pub artifacts: Json<Option<Vec<String>>>,
-    /// The registry this package is from.
-    pub registry: String,
 }
 
 impl<'de> Deserialize<'de> for Manifest {
@@ -101,6 +84,98 @@ impl FromStr for Manifest {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(toml::from_str(s)?)
+    }
+}
+
+/// A package, as described by a registry manifest.
+#[derive(Debug, FromRow, Deserialize, Default)]
+pub struct Package {
+    /// The name of the package.
+    pub name: String,
+    /// The version of the package.
+    pub version: String,
+    /// The description of the package.
+    pub description: Option<String>,
+    /// The homepage of the package.
+    pub homepage: Option<String>,
+    /// The license of the package.
+    pub license: Option<String>,
+    /// The source of the package. Can be `None` for meta packages.
+    pub source: Option<String>,
+    /// The build command of the package.
+    pub build: Option<String>,
+    /// The artifacts of the package after building.
+    pub artifacts: Json<Option<Vec<String>>>,
+    /// The registry this package is from.
+    pub registry: String,
+}
+
+impl Package {
+    /// Downloads and builds the package.
+    pub async fn build(&self, workspace: &Workspace) -> Result<()> {
+        let Some(source) = &self.source else {
+            // Nothing to do here.
+            return Ok(());
+        };
+
+        let source = Url::parse(source).context("invalid source URL")?;
+
+        // Create a temporary working directory.
+        let temp_dir = TempDir::new()?;
+
+        // Stream the download to a file.
+        let (_size, mut download) = download_stream(source.as_str()).await?;
+        let download_file_name = source
+            .path_segments()
+            .ok_or(anyhow!("invalid package download source"))?
+            .last()
+            .unwrap_or("download");
+        let mut file = File::create(temp_dir.path().join(download_file_name)).await?;
+        while let Some(chunk) = download.next().await {
+            let chunk = chunk?;
+            file.write_all(&chunk).await?;
+        }
+
+        // Perform build steps, if any.
+        if let Some(build) = &self.build {
+            let output = Command::new("zsh")
+                .arg("-c")
+                .arg(build)
+                .current_dir(temp_dir.path())
+                .spawn()
+                .context("failed to spawn build command")?
+                .wait_with_output()
+                .await?;
+
+            if !output.status.success() {
+                eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                eprint!("{}", String::from_utf8_lossy(&output.stdout));
+                return Err(anyhow!(
+                    "build command exited with non-zero status code: {}",
+                    output.status,
+                ));
+            }
+        }
+
+        // Copy artifacts to the workspace.
+        if let Some(artifacts) = &*self.artifacts {
+            for artifact in artifacts {
+                if artifact.starts_with('/') {
+                    return Err(anyhow!("artifact path cannot be absolute"));
+                }
+                let artifact = temp_dir.path().join(artifact);
+                if let Some(parent) = artifact.parent() {
+                    tokio::fs::create_dir_all(parent).await?;
+                }
+                tokio::fs::copy(
+                    &artifact,
+                    workspace.path()?.join(artifact.file_name().unwrap()),
+                )
+                .await?;
+            }
+        }
+
+        Ok(())
     }
 }
 

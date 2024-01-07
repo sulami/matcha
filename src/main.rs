@@ -6,7 +6,6 @@ use once_cell::sync::OnceCell;
 use tokio::task::JoinSet;
 
 pub(crate) mod download;
-pub(crate) mod installer;
 pub(crate) mod manifest;
 pub(crate) mod package;
 pub(crate) mod registry;
@@ -14,7 +13,6 @@ pub(crate) mod state;
 pub(crate) mod ui;
 pub(crate) mod workspace;
 
-use installer::download_build_package;
 use package::{InstalledPackageSpec, KnownPackageSpec, PackageRequest};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
@@ -338,7 +336,7 @@ async fn install_package(state: &State, pkg: &str, workspace: Option<String>) ->
     }
 
     let pkg = state.get_package(&pkg_spec).await?;
-    download_build_package(&pkg).await?;
+    pkg.build(&workspace).await?;
 
     state
         .add_installed_package(&pkg_spec, &Workspace::default())

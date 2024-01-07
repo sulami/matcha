@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::{Context, Result};
 use sqlx::FromRow;
@@ -29,6 +29,14 @@ impl Workspace {
             .await
             .context("failed to create workspace root")?;
         Ok(())
+    }
+
+    /// Returns the path to the workspace.
+    pub fn path(&self) -> Result<PathBuf> {
+        let workspace_directory = WORKSPACE_DIRECTORY
+            .get()
+            .context("workspace directory not initialized")?;
+        Ok(workspace_directory.join(&self.name))
     }
 }
 
