@@ -10,7 +10,11 @@ use tokio::sync::watch::Sender;
 /// downloaded to total bytes.
 pub async fn download_file(url: &str, progress: Option<Sender<usize>>) -> Result<Vec<u8>> {
     let client = Client::new();
-    let resp = client.get(url).send().await?;
+    let resp = client
+        .get(url)
+        .header("User-Agent", "matcha")
+        .send()
+        .await?;
 
     let content_length = resp.content_length().unwrap_or(0) as usize;
     let mut bytes = vec![];
@@ -34,7 +38,11 @@ pub async fn download_stream(
     url: &str,
 ) -> Result<(usize, impl Stream<Item = reqwest::Result<Bytes>>)> {
     let client = Client::new();
-    let resp = client.get(url).send().await?;
+    let resp = client
+        .get(url)
+        .header("User-Agent", "matcha")
+        .send()
+        .await?;
 
     let content_length = resp.content_length().unwrap_or(0) as usize;
     let stream = resp.bytes_stream();
