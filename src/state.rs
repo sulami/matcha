@@ -7,7 +7,11 @@ use sqlx::{
 };
 use tokio::fs::create_dir_all;
 
-use crate::{manifest::Package, package::PackageSpec, registry::Registry};
+use crate::{
+    manifest::Package,
+    package::{InstalledPackageSpec, KnownPackageSpec},
+    registry::Registry,
+};
 
 /// The internal state of the application, backed by a SQLite database.
 #[derive(Clone)]
@@ -82,17 +86,18 @@ impl State {
     }
 
     /// Returns all installed packages.
-    pub async fn installed_packages(&self) -> Result<Vec<PackageSpec>> {
-        let packages =
-            sqlx::query_as::<_, PackageSpec>("SELECT name, version FROM installed_packages")
-                .fetch_all(&self.db)
-                .await
-                .context("failed to fetch installed packages from database")?;
+    pub async fn installed_packages(&self) -> Result<Vec<InstalledPackageSpec>> {
+        let packages = sqlx::query_as::<_, InstalledPackageSpec>(
+            "SELECT name, version FROM installed_packages",
+        )
+        .fetch_all(&self.db)
+        .await
+        .context("failed to fetch installed packages from database")?;
         Ok(packages)
     }
 
     /// Adds a package to the internal state.
-    pub async fn add_installed_package(&self, pkg: &PackageSpec) -> Result<()> {
+    pub async fn add_installed_package(&self, pkg: &KnownPackageSpec) -> Result<()> {
         sqlx::query("INSERT INTO installed_packages (name, version) VALUES (?, ?)")
             .bind(&pkg.name)
             .bind(&pkg.version)
@@ -103,7 +108,7 @@ impl State {
     }
 
     /// Removes a package from the internal state.
-    pub async fn remove_installed_package(&self, pkg: &PackageSpec) -> Result<()> {
+    pub async fn remove_installed_package(&self, pkg: &InstalledPackageSpec) -> Result<()> {
         sqlx::query("DELETE FROM installed_packages WHERE name = ? AND version = ?")
             .bind(&pkg.name)
             .bind(&pkg.version)
@@ -114,7 +119,7 @@ impl State {
     }
 
     /// Returns whether a package is installed or not.
-    pub async fn is_package_installed(&self, pkg: &PackageSpec) -> Result<bool> {
+    pub async fn is_package_installed(&self, pkg: &KnownPackageSpec) -> Result<bool> {
         // TODO: This could be a direct query instead of getting all installed versions.
         Ok(self
             .installed_package_versions(&pkg.name)
@@ -317,13 +322,13 @@ mod tests {
     #[tokio::test]
     async fn test_package_add_list_remove() {
         let state = State::load(":memory:").await.unwrap();
-        let spec = PackageSpec::new("test-package", "0.1.0");
+        let spec = KnownPackageSpec::new("test-package", "0.1.0");
         state.add_installed_package(&spec).await.unwrap();
         let packages = state.installed_packages().await.unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, spec.name);
         assert_eq!(packages[0].version, spec.version);
-        state.remove_installed_package(&spec).await.unwrap();
+        state.remove_installed_package(&spec.into()).await.unwrap();
         let packages = state.installed_packages().await.unwrap();
         assert!(packages.is_empty());
     }
@@ -331,7 +336,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_package_refuses_same_version_twice() {
         let state = State::load(":memory:").await.unwrap();
-        let spec = PackageSpec::new("test-package", "0.1.0");
+        let spec = KnownPackageSpec::new("test-package", "0.1.0");
         state.add_installed_package(&spec).await.unwrap();
         assert!(state.add_installed_package(&spec).await.is_err());
     }
@@ -339,7 +344,7 @@ mod tests {
     #[tokio::test]
     async fn test_is_package_installed() {
         let state = State::load(":memory:").await.unwrap();
-        let spec = PackageSpec::new("test-package", "0.1.0");
+        let spec = KnownPackageSpec::new("test-package", "0.1.0");
         assert!(!state.is_package_installed(&spec).await.unwrap());
         state.add_installed_package(&spec).await.unwrap();
         assert!(state.is_package_installed(&spec).await.unwrap());

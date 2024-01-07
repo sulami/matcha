@@ -14,7 +14,7 @@ use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use ui::create_progress_bar;
 
-use crate::package::PackageSpec;
+use crate::package::{InstalledPackageSpec, KnownPackageSpec};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -194,7 +194,7 @@ async fn install_package(state: &State, pkg: &str) -> Result<()> {
 /// Uninstalls a package.
 async fn uninstall_package(state: &State, pkg: &str) -> Result<()> {
     let pkg: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let pkg: PackageSpec = pkg
+    let pkg: InstalledPackageSpec = pkg
         .resolve_installed_version(state)
         .await
         .context("failed to resolve package version")?;
@@ -318,7 +318,7 @@ mod tests {
     async fn test_install_package() {
         let state = setup_state_with_registry().await.unwrap();
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
-        let pkg: PackageSpec = pkg.resolve_known_version(&state).await.unwrap();
+        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
         install_package(&state, &pkg.name).await.unwrap();
         assert!(state.is_package_installed(&pkg).await.unwrap());
@@ -338,7 +338,7 @@ mod tests {
     async fn test_uninstall_package() {
         let state = setup_state_with_registry().await.unwrap();
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
-        let pkg: PackageSpec = pkg.resolve_known_version(&state).await.unwrap();
+        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
         install_package(&state, &pkg.name).await.unwrap();
         uninstall_package(&state, &pkg.name).await.unwrap();

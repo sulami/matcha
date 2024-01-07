@@ -19,7 +19,7 @@ impl PackageRequest {
     ///
     /// Returns an error if the package is either not installed,
     /// or if multiple versions of the package are installed.
-    pub async fn resolve_installed_version(&self, state: &State) -> Result<PackageSpec> {
+    pub async fn resolve_installed_version(&self, state: &State) -> Result<InstalledPackageSpec> {
         let installed_versions = state.installed_package_versions(&self.name).await?;
 
         if installed_versions.is_empty() {
@@ -45,14 +45,14 @@ impl PackageRequest {
             ));
         };
 
-        Ok(PackageSpec::new(&self.name, &resolved))
+        Ok(InstalledPackageSpec::new(&self.name, &resolved))
     }
 
     /// If the version isn't fully qualified, resolves it to the latest known one.
     ///
     /// Returns an error if the package is not known.
     /// If multiple versions of the package are known, the first (latest) one that matches is used.
-    pub async fn resolve_known_version(&self, state: &State) -> Result<PackageSpec> {
+    pub async fn resolve_known_version(&self, state: &State) -> Result<KnownPackageSpec> {
         let known_versions = state.known_package_versions(&self.name).await?;
 
         if known_versions.is_empty() {
@@ -69,7 +69,7 @@ impl PackageRequest {
             ));
         };
 
-        Ok(PackageSpec::new(&self.name, &resolved))
+        Ok(KnownPackageSpec::new(&self.name, &resolved))
     }
 }
 
@@ -128,16 +128,16 @@ fn find_matching_version(haystack: &[String], needle: &str) -> Option<String> {
         .cloned()
 }
 
-/// A [`PackageRequest`] with a resolved version in some context (known/installed).
+/// A [`PackageRequest`] with a resolved version based on known packages.
 #[derive(Clone, Debug, FromRow)]
-pub struct PackageSpec {
+pub struct KnownPackageSpec {
     /// The name of the package.
     pub name: String,
     /// The resolved version of the package.
     pub version: String,
 }
 
-impl PackageSpec {
+impl KnownPackageSpec {
     /// Returns a new [`PackageSpec`] with the given name and version.
     pub fn new(name: &str, version: &str) -> Self {
         Self {
@@ -147,9 +147,43 @@ impl PackageSpec {
     }
 }
 
-impl Display for PackageSpec {
+impl Display for KnownPackageSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}@{}", self.name, self.version)
+    }
+}
+
+/// A [`PackageRequest`] with a resolved version based on installed packages.
+#[derive(Clone, Debug, FromRow)]
+pub struct InstalledPackageSpec {
+    /// The name of the package.
+    pub name: String,
+    /// The resolved version of the package.
+    pub version: String,
+}
+
+impl InstalledPackageSpec {
+    /// Returns a new [`PackageSpec`] with the given name and version.
+    pub fn new(name: &str, version: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            version: version.to_string(),
+        }
+    }
+}
+
+impl Display for InstalledPackageSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.version)
+    }
+}
+
+impl From<KnownPackageSpec> for InstalledPackageSpec {
+    fn from(spec: KnownPackageSpec) -> Self {
+        Self {
+            name: spec.name,
+            version: spec.version,
+        }
     }
 }
 
@@ -206,7 +240,7 @@ mod tests {
     async fn test_resolve_version() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&PackageSpec::new("foo", "1.0.0"))
+            .add_installed_package(&KnownPackageSpec::new("foo", "1.0.0"))
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -231,7 +265,7 @@ mod tests {
     async fn test_resolve_version_fails_if_this_version_is_not_installed() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&PackageSpec::new("foo", "1.0.0"))
+            .add_installed_package(&KnownPackageSpec::new("foo", "1.0.0"))
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -245,11 +279,11 @@ mod tests {
     async fn test_resolve_installed_package_version_fails_if_multiple_matches_installed() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&PackageSpec::new("foo", "1.0.0"))
+            .add_installed_package(&KnownPackageSpec::new("foo", "1.0.0"))
             .await
             .unwrap();
         state
-            .add_installed_package(&PackageSpec::new("foo", "2.0.0"))
+            .add_installed_package(&KnownPackageSpec::new("foo", "2.0.0"))
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -296,7 +330,7 @@ mod tests {
     async fn test_resolve_known_version_fails_if_this_version_is_not_known() {
         let state = State::load(":memory:").await.unwrap();
         state
-            .add_installed_package(&PackageSpec::new("foo", "1.0.0"))
+            .add_installed_package(&KnownPackageSpec::new("foo", "1.0.0"))
             .await
             .unwrap();
         let pkg = PackageRequest {
