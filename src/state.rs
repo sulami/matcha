@@ -11,6 +11,7 @@ use crate::{
     manifest::Package,
     package::{InstalledPackageSpec, KnownPackageSpec},
     registry::Registry,
+    workspace::Workspace,
 };
 
 /// The internal state of the application, backed by a SQLite database.
@@ -316,6 +317,46 @@ impl State {
         .context("failed to fetch known package from database")?;
         Ok(pkg)
     }
+
+    /// Adds a workspace.
+    pub async fn add_workspace(&self, workspace: &Workspace) -> Result<()> {
+        sqlx::query("INSERT INTO workspaces (name) VALUES ($1)")
+            .bind(&workspace.name)
+            .execute(&self.db)
+            .await
+            .context("failed to insert workspace into database")?;
+        Ok(())
+    }
+
+    /// Removes a workspace.
+    pub async fn remove_workspace(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM workspaces WHERE name = $1")
+            .bind(name)
+            .execute(&self.db)
+            .await
+            .context("failed to remove workspace from database")?;
+        Ok(())
+    }
+
+    /// Gets a workspace.
+    pub async fn get_workspace(&self, name: &str) -> Result<Option<Workspace>> {
+        let workspace = sqlx::query_as::<_, Workspace>("SELECT * FROM workspaces WHERE name = $1")
+            .bind(name)
+            .fetch_optional(&self.db)
+            .await
+            .context("failed to fetch workspace from database")?;
+        Ok(workspace)
+    }
+
+    /// Returns all workspaces.
+    pub async fn workspaces(&self) -> Result<Vec<Workspace>> {
+        let workspaces =
+            sqlx::query_as::<_, Workspace>("SELECT * FROM workspaces ORDER BY name ASC")
+                .fetch_all(&self.db)
+                .await
+                .context("failed to fetch workspaces from database")?;
+        Ok(workspaces)
+    }
 }
 
 #[cfg(test)]
@@ -605,5 +646,33 @@ mod tests {
         assert_eq!(versions[0], "1.0.0");
         assert_eq!(versions[1], "0.2.0");
         assert_eq!(versions[2], "0.1.0");
+    }
+
+    #[tokio::test]
+    async fn test_add_list_remove_workspace() {
+        let state = State::load(":memory:").await.unwrap();
+        let workspace = Workspace::new("test");
+        state.add_workspace(&workspace).await.unwrap();
+        let workspaces = state.workspaces().await.unwrap();
+        assert_eq!(workspaces.len(), 2);
+        assert_eq!(workspaces[1].name, workspace.name);
+        state.remove_workspace(&workspace.name).await.unwrap();
+        let workspaces = state.workspaces().await.unwrap();
+        assert_eq!(workspaces.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_add_workspace_refuses_same_name_twice() {
+        let state = State::load(":memory:").await.unwrap();
+        let workspace = Workspace::new("test");
+        state.add_workspace(&workspace).await.unwrap();
+        assert!(state.add_workspace(&workspace).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_global_worksace() {
+        let state = State::load(":memory:").await.unwrap();
+        let workspace = state.get_workspace("global").await.unwrap().unwrap();
+        assert_eq!(workspace.name, "global");
     }
 }

@@ -9,6 +9,7 @@ pub(crate) mod package;
 pub(crate) mod registry;
 pub(crate) mod state;
 pub(crate) mod ui;
+pub(crate) mod workspace;
 
 use installer::download_build_package;
 use package::{InstalledPackageSpec, KnownPackageSpec, PackageRequest};
