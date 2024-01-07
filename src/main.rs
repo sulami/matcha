@@ -62,9 +62,11 @@ async fn main() -> Result<()> {
             } => {
                 ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
+                let workspace = get_create_workspace(&state, workspace).await?;
+
                 if pkgs.is_empty() {
                     pkgs = state
-                        .installed_packages(&Workspace::default())
+                        .installed_packages(&workspace)
                         .await?
                         .into_iter()
                         .map(|pkg| pkg.name)
@@ -77,7 +79,7 @@ async fn main() -> Result<()> {
                 for pkg in pkgs {
                     let state = state.clone();
                     let workspace = workspace.clone();
-                    set.spawn(async move { update_package(&state, &pkg, workspace).await });
+                    set.spawn(async move { update_package(&state, &pkg, &workspace).await });
                 }
 
                 let mut results = vec![];
@@ -339,7 +341,7 @@ async fn install_package(state: &State, pkg: &str, workspace: Option<String>) ->
     pkg.build(&workspace).await?;
 
     state
-        .add_installed_package(&pkg_spec, &Workspace::default())
+        .add_installed_package(&pkg_spec, &workspace)
         .await
         .context("failed to register installed package")?;
 
@@ -347,13 +349,8 @@ async fn install_package(state: &State, pkg: &str, workspace: Option<String>) ->
 }
 
 /// Updates a package.
-async fn update_package(
-    state: &State,
-    pkg: &str,
-    workspace: Option<String>,
-) -> Result<Option<String>> {
+async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<Option<String>> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let workspace = get_create_workspace(state, workspace).await?;
     let existing_pkg = pkg_req
         .resolve_installed_version(state, &workspace)
         .await
@@ -363,8 +360,11 @@ async fn update_package(
         // Install the new version
         state.get_package(&new_pkg).await?.build(&workspace).await?;
         // Remove the old one
-        // TODO: For this I'll need a way to figure out which files belong to this package.
-        // existing_pkg.remove(&state, &workspace).await?;
+        existing_pkg.remove(&workspace).await?;
+        state
+            .remove_installed_package(&existing_pkg, &workspace)
+            .await
+            .context("failed to deregister installed package")?;
         Ok(Some(format!("Updated {existing_pkg} to {new_pkg}")))
     } else {
         Ok(None)
@@ -380,8 +380,9 @@ async fn uninstall_package(state: &State, pkg: &str, workspace: Option<String>) 
         .await
         .context("failed to resolve package version")?;
 
+    pkg_spec.remove(&workspace).await?;
     state
-        .remove_installed_package(&pkg_spec, &Workspace::default())
+        .remove_installed_package(&pkg_spec, &workspace)
         .await
         .context("failed to deregister installed package")?;
 

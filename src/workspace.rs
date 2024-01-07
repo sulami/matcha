@@ -3,7 +3,7 @@ use std::{fmt::Display, path::PathBuf};
 use anyhow::{Context, Result};
 use sqlx::FromRow;
 
-use crate::WORKSPACE_DIRECTORY;
+use crate::{package::InstalledPackageSpec, WORKSPACE_DIRECTORY};
 
 /// A place that can have packages installed.
 #[derive(Debug, Clone, FromRow)]
@@ -37,6 +37,12 @@ impl Workspace {
             .get()
             .context("workspace directory not initialized")?;
         Ok(workspace_directory.join(&self.name))
+    }
+
+    /// Removes a package's files from this workspace.
+    pub async fn remove_package(&self, pkg: &InstalledPackageSpec) -> Result<()> {
+        // TODO: Remove the package's files.
+        Ok(())
     }
 }
 

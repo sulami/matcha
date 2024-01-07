@@ -186,7 +186,7 @@ pub struct InstalledPackageSpec {
 }
 
 impl InstalledPackageSpec {
-    /// Create a new spec from a [`PackageRequest`] and a resolved version.
+    /// Creates a new spec from a [`PackageRequest`] and a resolved version.
     pub fn from_request(request: &PackageRequest, version: String) -> Self {
         Self {
             name: request.name.clone(),
@@ -210,6 +210,11 @@ impl InstalledPackageSpec {
         } else {
             Ok(None)
         }
+    }
+
+    /// Removes this package's files from a workspace.
+    pub async fn remove(&self, workspace: &Workspace) -> Result<()> {
+        workspace.remove_package(self).await
     }
 }
 
