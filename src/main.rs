@@ -154,7 +154,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// A peaceful package manager
 #[derive(Parser, Debug)]
+#[command(author, version, about)]
 struct Cli {
     /// Command to run
     #[command(subcommand)]
@@ -164,8 +166,8 @@ struct Cli {
     #[arg(
         short,
         long,
-        env = "PKG_STATE_DB",
-        default_value = "~/.config/pkg/state.db"
+        env = "MATCHA_STATE_DB",
+        default_value = "~/.config/matcha/state.db"
     )]
     state_db: String,
 }

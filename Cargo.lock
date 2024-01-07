@@ -909,6 +909,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
 
 [[package]]
+name = "matcha"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures-util",
+ "indicatif",
+ "reqwest",
+ "serde",
+ "shellexpand",
+ "sqlx",
+ "tempfile",
+ "time",
+ "tokio",
+ "toml",
+ "url",
+]
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1199,26 +1219,6 @@ checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
 dependencies = [
  "der",
  "spki",
-]
-
-[[package]]
-name = "pkg"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "futures-util",
- "indicatif",
- "reqwest",
- "serde",
- "shellexpand",
- "sqlx",
- "tempfile",
- "time",
- "tokio",
- "toml",
- "url",
 ]
 
 [[package]]

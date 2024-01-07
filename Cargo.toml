@@ -1,7 +1,8 @@
 [package]
-name = "pkg"
+name = "matcha"
 version = "0.1.0"
 edition = "2021"
+authors = ["Robin Schroer"]
 
 [dependencies]
 anyhow = "1"
