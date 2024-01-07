@@ -16,6 +16,7 @@ use package::{InstalledPackageSpec, KnownPackageSpec, PackageRequest};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use ui::create_progress_bar;
+use workspace::Workspace;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -53,7 +54,7 @@ async fn main() -> Result<()> {
 
                 if pkgs.is_empty() {
                     pkgs = state
-                        .installed_packages()
+                        .installed_packages(&Workspace::default())
                         .await?
                         .into_iter()
                         .map(|pkg| pkg.name)
@@ -310,7 +311,7 @@ async fn uninstall_package(state: &State, pkg: &str) -> Result<String> {
 
 /// Lists all installed packages.
 async fn list_packages(state: &State) -> Result<()> {
-    let packages = state.installed_packages().await?;
+    let packages = state.installed_packages(&Workspace::default()).await?;
 
     for pkg in packages {
         println!("{}", pkg);

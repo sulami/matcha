@@ -11,7 +11,13 @@ impl Workspace {
     /// Creates a new workspace.
     pub fn new(name: &str) -> Self {
         Self {
-            name: name.to_string(),
+            name: String::from(name),
         }
+    }
+}
+
+impl Default for Workspace {
+    fn default() -> Self {
+        Workspace::new("global")
     }
 }

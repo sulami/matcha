@@ -87,10 +87,16 @@ impl State {
     }
 
     /// Returns all installed packages.
-    pub async fn installed_packages(&self) -> Result<Vec<InstalledPackageSpec>> {
+    pub async fn installed_packages(
+        &self,
+        workspace: &Workspace,
+    ) -> Result<Vec<InstalledPackageSpec>> {
         let packages = sqlx::query_as::<_, InstalledPackageSpec>(
-            "SELECT name, version, requested_version FROM installed_packages",
+            r"SELECT name, version, requested_version
+            FROM installed_packages
+            WHERE workspace = $1",
         )
+        .bind(&workspace.name)
         .fetch_all(&self.db)
         .await
         .context("failed to fetch installed packages from database")?;
@@ -390,12 +396,18 @@ mod tests {
         let state = State::load(":memory:").await.unwrap();
         let spec = known_package("test-package", "0.1.0");
         state.add_installed_package(&spec).await.unwrap();
-        let packages = state.installed_packages().await.unwrap();
+        let packages = state
+            .installed_packages(&Workspace::default())
+            .await
+            .unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, spec.name);
         assert_eq!(packages[0].version, spec.version);
         state.remove_installed_package(&spec.into()).await.unwrap();
-        let packages = state.installed_packages().await.unwrap();
+        let packages = state
+            .installed_packages(&Workspace::default())
+            .await
+            .unwrap();
         assert!(packages.is_empty());
     }
 
