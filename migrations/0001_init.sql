@@ -31,5 +31,5 @@ CREATE TABLE IF NOT EXISTS known_packages (
 
     registry TEXT NOT NULL,
     PRIMARY KEY (name, version),
-    FOREIGN KEY (registry) REFERENCES registries (name)
+    FOREIGN KEY (registry) REFERENCES registries (name) ON DELETE CASCADE
 );

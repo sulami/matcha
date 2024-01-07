@@ -171,7 +171,7 @@ impl State {
         if !self.registry_exists_by_name(name).await? {
             return Err(anyhow!("registry {} does not exist", name));
         }
-        sqlx::query("DELETE FROM registries WHERE name = ?")
+        sqlx::query("DELETE FROM registries WHERE name = $1")
             .bind(name)
             .execute(&self.db)
             .await
@@ -390,6 +390,36 @@ mod tests {
     async fn test_remove_registry_refuses_nonexistent_name() {
         let state = State::load(":memory:").await.unwrap();
         assert!(state.remove_registry("test").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_remove_registry_cascades_to_know_packages() {
+        let state = setup_state_with_registry().await.unwrap();
+
+        let pkgs = vec![
+            Package {
+                name: "foo".to_string(),
+                version: "1.0.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+            Package {
+                name: "bar".to_string(),
+                version: "1.0.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+            Package {
+                name: "baz".to_string(),
+                version: "1.0.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+        ];
+        state.add_known_packages(&pkgs).await.unwrap();
+        state.remove_registry("test").await.unwrap();
+        let results = state.search_known_packages("foo").await.unwrap();
+        assert!(results.is_empty());
     }
 
     #[tokio::test]
