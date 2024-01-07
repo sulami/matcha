@@ -253,10 +253,6 @@ async fn update_package(state: &State, pkg: &str) -> Result<Option<String>> {
         .await
         .context("failed to resolve package version")?;
 
-    if !state.is_package_installed(&pkg_spec.clone().into()).await? {
-        return Err(anyhow!("package {} is not installed", pkg_spec));
-    }
-
     if let Some(new_version) = pkg_spec.available_update(state).await? {
         // install update
         // state

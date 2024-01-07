@@ -156,6 +156,8 @@ impl Display for KnownPackageSpec {
     }
 }
 
+// Test-only crutch.
+#[cfg(test)]
 impl From<InstalledPackageSpec> for KnownPackageSpec {
     fn from(spec: InstalledPackageSpec) -> Self {
         Self {
@@ -211,6 +213,8 @@ impl Display for InstalledPackageSpec {
     }
 }
 
+// Test-only crutch.
+#[cfg(test)]
 impl From<KnownPackageSpec> for InstalledPackageSpec {
     fn from(spec: KnownPackageSpec) -> Self {
         Self {
