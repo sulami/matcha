@@ -217,7 +217,7 @@ enum PackageCommand {
     #[command(arg_required_else_help = true, alias = "i")]
     Install {
         /// Workspace to use
-        #[arg(short, long)]
+        #[arg(short, long, env = "MATCHA_WORKSPACE", default_value = "global")]
         workspace: Option<String>,
 
         /// Packages to install
@@ -229,7 +229,7 @@ enum PackageCommand {
     #[command(alias = "u")]
     Update {
         /// Workspace to use
-        #[arg(short, long)]
+        #[arg(short, long, env = "MATCHA_WORKSPACE", default_value = "global")]
         workspace: Option<String>,
 
         /// Select packages to update
@@ -240,7 +240,7 @@ enum PackageCommand {
     #[command(arg_required_else_help = true, alias = "rm")]
     Remove {
         /// Workspace to use
-        #[arg(short, long)]
+        #[arg(short, long, env = "MATCHA_WORKSPACE", default_value = "global")]
         workspace: Option<String>,
 
         /// Packages to uninstall
@@ -252,8 +252,8 @@ enum PackageCommand {
     #[command(alias = "ls")]
     List {
         /// Workspace to use
-        #[arg(short, long)]
-        workspace: Option<String>,
+        #[arg(short, long, env = "MATCHA_WORKSPACE", default_value = "global")]
+        workspace: String,
     },
 
     /// Search for a package (alias: s)
