@@ -5,7 +5,7 @@ use shellexpand::tilde;
 use sqlx::FromRow;
 use tokio::fs::{create_dir_all, read_dir, read_link, remove_dir_all, remove_file};
 
-use crate::{package::InstalledPackageSpec, WORKSPACE_DIRECTORY};
+use crate::{package::InstalledPackageSpec, WORKSPACE_ROOT};
 
 /// A place that can have packages installed.
 #[derive(Debug, Clone, FromRow)]
@@ -24,7 +24,7 @@ impl Workspace {
 
     /// Returns the directory of the workspace.
     pub fn directory(&self) -> Result<PathBuf> {
-        let workspace_directory = WORKSPACE_DIRECTORY
+        let workspace_directory = WORKSPACE_ROOT
             .get()
             .context("workspace directory not initialized")?;
         let dir = tilde(workspace_directory.join(&self.name).to_str().unwrap())
@@ -35,7 +35,10 @@ impl Workspace {
 
     /// Returns the bin directory of the workspace.
     pub fn bin_directory(&self) -> Result<PathBuf> {
-        Ok(self.directory()?.join("bin"))
+        Ok(self
+            .directory()
+            .context("failed to get workspace bin directory")?
+            .join("bin"))
     }
 
     /// Creates the directory for the workspace, if it doesn't exist.
@@ -55,12 +58,16 @@ impl Workspace {
             if entry.metadata().await?.file_type().is_symlink()
                 && read_link(entry.path()).await?.starts_with(&pkg_dir)
             {
-                remove_file(entry.path()).await?;
+                remove_file(entry.path())
+                    .await
+                    .context("failed to delete package bin symlink")?;
             }
         }
 
         // Remove the package's directory.
-        remove_dir_all(&pkg_dir).await?;
+        remove_dir_all(&pkg_dir)
+            .await
+            .context("failed to delete package directory")?;
 
         Ok(())
     }

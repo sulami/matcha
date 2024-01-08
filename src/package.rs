@@ -1,9 +1,9 @@
 use std::{fmt::Display, path::PathBuf, str::FromStr};
 
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use sqlx::FromRow;
 
-use crate::{state::State, workspace::Workspace, WORKSPACE_DIRECTORY};
+use crate::{state::State, workspace::Workspace, WORKSPACE_ROOT};
 
 /// A package name and maybe a version, which needs resolution in some context.
 #[derive(Clone, Debug)]
@@ -214,7 +214,7 @@ impl InstalledPackageSpec {
 
     /// Returns the path to this package's files in the current workspace.
     pub fn directory(&self) -> PathBuf {
-        WORKSPACE_DIRECTORY
+        WORKSPACE_ROOT
             .get()
             .expect("workspace directory not initialized")
             .join(&self.name)
@@ -223,7 +223,10 @@ impl InstalledPackageSpec {
 
     /// Removes this package's files from a workspace.
     pub async fn remove(&self, workspace: &Workspace) -> Result<()> {
-        workspace.remove_package(self).await
+        workspace
+            .remove_package(self)
+            .await
+            .context("failed to remove package from workspace")
     }
 }
 

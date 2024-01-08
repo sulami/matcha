@@ -1,4 +1,7 @@
-use std::{env::var, path::PathBuf};
+use std::{
+    env::{self, var},
+    path::PathBuf,
+};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
@@ -20,7 +23,7 @@ use ui::create_progress_bar;
 use workspace::Workspace;
 
 /// The root directory that holds all the workspaces.
-static WORKSPACE_DIRECTORY: OnceCell<PathBuf> = OnceCell::new();
+static WORKSPACE_ROOT: OnceCell<PathBuf> = OnceCell::new();
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -29,11 +32,12 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to load internal state")?;
 
-    WORKSPACE_DIRECTORY.set(args.workspace_directory).unwrap();
+    WORKSPACE_ROOT.set(args.workspace_root).unwrap();
 
     match args.command {
         Command::Package(cmd) => match cmd {
             PackageCommand::Install { pkgs, workspace } => {
+                let workspace = get_create_workspace(&state, workspace).await?;
                 ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
                 let pb = create_progress_bar("Installing packages", pkgs.len() as u64);
@@ -42,7 +46,7 @@ async fn main() -> Result<()> {
                 for pkg in pkgs {
                     let state = state.clone();
                     let workspace = workspace.clone();
-                    set.spawn(async move { install_package(&state, &pkg, workspace).await });
+                    set.spawn(async move { install_package(&state, &pkg, &workspace).await });
                 }
 
                 let mut results = vec![];
@@ -55,13 +59,14 @@ async fn main() -> Result<()> {
                 for line in output {
                     println!("{}", line);
                 }
+
+                check_path_for_workspace(&workspace);
             }
             PackageCommand::Update {
                 mut pkgs,
                 workspace,
             } => {
                 ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
-
                 let workspace = get_create_workspace(&state, workspace).await?;
 
                 if pkgs.is_empty() {
@@ -97,13 +102,14 @@ async fn main() -> Result<()> {
                     .for_each(|line| println!("{}", line));
             }
             PackageCommand::Remove { pkgs, workspace } => {
+                let workspace = get_create_workspace(&state, workspace).await?;
                 let pb = create_progress_bar("Removing packages", pkgs.len() as u64);
                 let mut set = JoinSet::new();
 
                 for pkg in pkgs {
                     let state = state.clone();
                     let workspace = workspace.clone();
-                    set.spawn(async move { uninstall_package(&state, &pkg, workspace).await });
+                    set.spawn(async move { uninstall_package(&state, &pkg, &workspace).await });
                 }
 
                 let mut results = vec![];
@@ -117,7 +123,10 @@ async fn main() -> Result<()> {
                     println!("{}", line);
                 }
             }
-            PackageCommand::List { workspace } => list_packages(&state, workspace).await?,
+            PackageCommand::List { workspace } => {
+                let workspace = get_create_workspace(&state, workspace).await?;
+                list_packages(&state, &workspace).await?;
+            }
             PackageCommand::Search {
                 query,
                 all_versions,
@@ -179,10 +188,10 @@ struct Cli {
     /// Path to the packge directory
     #[arg(
         long,
-        env = "MATCHA_WORKSPACE_DIR",
+        env = "MATCHA_WORKSPACE_ROOT",
         default_value = "~/.config/matcha/workspaces"
     )]
-    workspace_directory: PathBuf,
+    workspace_root: PathBuf,
 }
 
 #[derive(Parser, Debug)]
@@ -300,6 +309,24 @@ enum RegistryCommand {
     Fetch,
 }
 
+/// Checks if the current workspace bin dir is in $PATH, and emit a message if it isn't.
+fn check_path_for_workspace(workspace: &Workspace) {
+    let Ok(path) = env::var("PATH") else {
+        return;
+    };
+
+    let bin_dir = workspace.bin_directory().unwrap();
+    if !path.split(':').any(|p| p == bin_dir.to_str().unwrap()) {
+        eprintln!(
+            r"Warning: the workspace bin directory is not in $PATH.
+Add this to your shell's configuration file:
+
+export PATH={0}:$PATH",
+            bin_dir.display()
+        );
+    }
+}
+
 /// Gets a workspace by name, if supplied. Otherwise defaults to the global workspace.
 ///
 /// Also ensures the directory actually exists.
@@ -324,24 +351,22 @@ async fn get_create_workspace(state: &State, name: Option<String>) -> Result<Wor
 }
 
 /// Installs a package.
-async fn install_package(state: &State, pkg: &str, workspace: Option<String>) -> Result<String> {
+async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<String> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let pkg_spec: KnownPackageSpec = pkg_req
         .resolve_known_version(state)
         .await
         .context("failed to resolve package version")?;
 
-    let workspace = get_create_workspace(state, workspace).await?;
-
-    if state.is_package_installed(&pkg_spec, &workspace).await? {
+    if state.is_package_installed(&pkg_spec, workspace).await? {
         return Err(anyhow!("package {} is already installed", pkg));
     }
 
     let pkg = state.get_package(&pkg_spec).await?;
-    pkg.build(&workspace).await?;
+    pkg.build(workspace).await?;
 
     state
-        .add_installed_package(&pkg_spec, &workspace)
+        .add_installed_package(&pkg_spec, workspace)
         .await
         .context("failed to register installed package")?;
 
@@ -352,17 +377,17 @@ async fn install_package(state: &State, pkg: &str, workspace: Option<String>) ->
 async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<Option<String>> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let existing_pkg = pkg_req
-        .resolve_installed_version(state, &workspace)
+        .resolve_installed_version(state, workspace)
         .await
         .context("failed to resolve package version")?;
 
     if let Some(new_pkg) = existing_pkg.available_update(state).await? {
         // Install the new version
-        state.get_package(&new_pkg).await?.build(&workspace).await?;
+        state.get_package(&new_pkg).await?.build(workspace).await?;
         // Remove the old one
-        existing_pkg.remove(&workspace).await?;
+        existing_pkg.remove(workspace).await?;
         state
-            .remove_installed_package(&existing_pkg, &workspace)
+            .remove_installed_package(&existing_pkg, workspace)
             .await
             .context("failed to deregister installed package")?;
         Ok(Some(format!("Updated {existing_pkg} to {new_pkg}")))
@@ -372,17 +397,19 @@ async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Resu
 }
 
 /// Uninstalls a package.
-async fn uninstall_package(state: &State, pkg: &str, workspace: Option<String>) -> Result<String> {
+async fn uninstall_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<String> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let workspace = get_create_workspace(state, workspace).await?;
     let pkg_spec: InstalledPackageSpec = pkg_req
-        .resolve_installed_version(state, &workspace)
+        .resolve_installed_version(state, workspace)
         .await
         .context("failed to resolve package version")?;
 
-    pkg_spec.remove(&workspace).await?;
+    pkg_spec
+        .remove(workspace)
+        .await
+        .context("failed to remove package")?;
     state
-        .remove_installed_package(&pkg_spec, &workspace)
+        .remove_installed_package(&pkg_spec, workspace)
         .await
         .context("failed to deregister installed package")?;
 
@@ -390,9 +417,8 @@ async fn uninstall_package(state: &State, pkg: &str, workspace: Option<String>) 
 }
 
 /// Lists all installed packages.
-async fn list_packages(state: &State, workspace: Option<String>) -> Result<()> {
-    let workspace = get_create_workspace(state, workspace).await?;
-    let packages = state.installed_packages(&workspace).await?;
+async fn list_packages(state: &State, workspace: &Workspace) -> Result<()> {
+    let packages = state.installed_packages(workspace).await?;
 
     for pkg in packages {
         println!("{}", pkg);
@@ -562,7 +588,7 @@ mod tests {
     /// Ensure you keep this in scope, as the directory will be deleted when it is dropped.
     fn temp_workspace_directory() -> Result<TempDir> {
         let dir = tempdir().context("failed to create temporary workspace directory")?;
-        WORKSPACE_DIRECTORY
+        WORKSPACE_ROOT
             .set(dir.path().to_path_buf())
             .expect("double init for WORKSPACE_DIRECTORY");
         Ok(dir)
@@ -572,10 +598,13 @@ mod tests {
     async fn test_install_package() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
+        let workspace = get_create_workspace(&state, None).await.unwrap();
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
-        install_package(&state, &pkg.name, None).await.unwrap();
+        install_package(&state, &pkg.name, &workspace)
+            .await
+            .unwrap();
         assert!(state
             .is_package_installed(&pkg, &Workspace::default())
             .await
@@ -586,10 +615,11 @@ mod tests {
     async fn test_install_package_refuses_if_package_is_already_installed() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
+        let workspace = get_create_workspace(&state, None).await.unwrap();
         let pkg = "test-package@0.1.0";
 
-        install_package(&state, pkg, None).await.unwrap();
-        let result = install_package(&state, pkg, None).await;
+        install_package(&state, pkg, &workspace).await.unwrap();
+        let result = install_package(&state, pkg, &workspace).await;
         assert!(result.is_err());
     }
 
@@ -597,11 +627,16 @@ mod tests {
     async fn test_uninstall_package() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
+        let workspace = get_create_workspace(&state, None).await.unwrap();
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
-        install_package(&state, &pkg.name, None).await.unwrap();
-        uninstall_package(&state, &pkg.name, None).await.unwrap();
+        install_package(&state, &pkg.name, &workspace)
+            .await
+            .unwrap();
+        uninstall_package(&state, &pkg.name, &workspace)
+            .await
+            .unwrap();
         assert!(!state
             .is_package_installed(&pkg, &Workspace::default())
             .await
@@ -612,9 +647,10 @@ mod tests {
     async fn test_uninstall_package_refuses_if_package_is_not_installed() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
+        let workspace = get_create_workspace(&state, None).await.unwrap();
         let pkg = "test-package@0.1.0";
 
-        let result = uninstall_package(&state, pkg, None).await;
+        let result = uninstall_package(&state, pkg, &workspace).await;
         assert!(result.is_err());
     }
 
@@ -622,17 +658,19 @@ mod tests {
     async fn test_list_packages() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
+        let workspace = get_create_workspace(&state, None).await.unwrap();
         let pkg = "test-package@0.1.0";
 
-        install_package(&state, pkg, None).await.unwrap();
-        list_packages(&state, None).await.unwrap();
+        install_package(&state, pkg, &workspace).await.unwrap();
+        list_packages(&state, &workspace).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_list_packages_empty() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
-        list_packages(&state, None).await.unwrap();
+        let workspace = get_create_workspace(&state, None).await.unwrap();
+        list_packages(&state, &workspace).await.unwrap();
     }
 
     #[tokio::test]
@@ -739,7 +777,7 @@ mod tests {
         let workspace = Workspace::new("test");
 
         add_workspace(&state, &workspace.name).await.unwrap();
-        install_package(&state, "test-package@0.1.0", Some(workspace.name.clone()))
+        install_package(&state, "test-package@0.1.0", &workspace)
             .await
             .unwrap();
         remove_workspace(&state, "test").await.unwrap();
