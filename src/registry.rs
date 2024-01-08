@@ -82,6 +82,9 @@ impl Registry {
 
     /// Returns if the registry should be fetched.
     pub fn should_update(&self) -> bool {
+        if let Uri::File(_) = self.uri {
+            return true;
+        }
         let now = OffsetDateTime::now_utc();
         let Some(last_fetched) = self.last_fetched else {
             return true;
@@ -251,6 +254,14 @@ mod tests {
         assert!(registry.should_update());
         registry.last_fetched = Some(OffsetDateTime::now_utc());
         assert!(!registry.should_update());
+    }
+
+    #[tokio::test]
+    async fn test_should_update_always_updates_local_files() {
+        let mut registry = Registry::new("example");
+        assert!(registry.should_update());
+        registry.last_fetched = Some(OffsetDateTime::now_utc());
+        assert!(registry.should_update());
     }
 
     #[tokio::test]
