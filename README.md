@@ -22,8 +22,9 @@ A list of highlights:
   `mysql@5` package that needs manual curating. Short of yanking releases,
   versions are meant to be append-only.
 - Workspaces. Need different versions of a package in different contexts? Create
-  a workspace. `$PATH` gets pached a `workspace shell`, so that a workspace acts
-  as a layer of package overrides. Workspaces are even stackable.
+  a workspace. `$PATH` gets pached in a `workspace shell`, so that a workspace
+  acts as a layer of package overrides. Workspaces are stackable, and "globally"
+  installed packages are just another workspace.
 - Local registries. Want to manage a software that hasn't been packaged yet?
   Just add a registry TOML file from your disk, and it'll work just the same.
 
