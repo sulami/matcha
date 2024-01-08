@@ -1,7 +1,9 @@
 use std::{fmt::Display, ops::Deref, path::PathBuf};
 
 use anyhow::{Context, Result};
+use shellexpand::tilde;
 use sqlx::FromRow;
+use tokio::fs::{create_dir_all, read_dir, read_link, remove_dir_all, remove_file};
 
 use crate::{package::InstalledPackageSpec, WORKSPACE_DIRECTORY};
 
@@ -25,7 +27,7 @@ impl Workspace {
         let workspace_directory = WORKSPACE_DIRECTORY
             .get()
             .context("workspace directory not initialized")?;
-        let dir = shellexpand::tilde(workspace_directory.join(&self.name).to_str().unwrap())
+        let dir = tilde(workspace_directory.join(&self.name).to_str().unwrap())
             .deref()
             .into();
         Ok(dir)
@@ -38,7 +40,7 @@ impl Workspace {
 
     /// Creates the directory for the workspace, if it doesn't exist.
     pub async fn ensure_exists(&self) -> Result<()> {
-        tokio::fs::create_dir_all(self.directory()?.join("bin"))
+        create_dir_all(self.directory()?.join("bin"))
             .await
             .context("failed to create workspace root")?;
         Ok(())
@@ -46,7 +48,20 @@ impl Workspace {
 
     /// Removes a package's files from this workspace.
     pub async fn remove_package(&self, pkg: &InstalledPackageSpec) -> Result<()> {
-        // TODO: Remove the package's files.
+        let pkg_dir = self.directory()?.join(&pkg.name);
+
+        // Remove the package's bin symlinks.
+        while let Some(entry) = read_dir(self.bin_directory()?).await?.next_entry().await? {
+            if entry.metadata().await?.file_type().is_symlink()
+                && read_link(entry.path()).await?.starts_with(&pkg_dir)
+            {
+                remove_file(entry.path()).await?;
+            }
+        }
+
+        // Remove the package's directory.
+        remove_dir_all(&pkg_dir).await?;
+
         Ok(())
     }
 }
