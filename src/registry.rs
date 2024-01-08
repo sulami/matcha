@@ -5,7 +5,10 @@ use sqlx::{sqlite::SqliteRow, FromRow, Row};
 use time::OffsetDateTime;
 use tokio::fs::read_to_string;
 
-use crate::{download::download_file, manifest::Manifest, state::State};
+use crate::{download::download_file, manifest::Manifest, package::KnownPackageSpec, state::State};
+
+#[cfg(test)]
+use crate::manifest::Package;
 
 /// How often to update registries.
 const UPDATE_AFTER: Duration = Duration::from_secs(60 * 24);
@@ -44,11 +47,12 @@ impl Registry {
         }
     }
 
-    /// Do the initial fetch of the registry and prep it for writing to the database.
-    pub async fn initialize(&mut self, fetcher: &impl Fetcher) -> Result<()> {
-        let manifest = self.fetch(fetcher).await?;
+    /// Do the initial fetch of the registry and write it to the database.
+    pub async fn initialize(&mut self, state: &State, fetcher: &impl Fetcher) -> Result<()> {
+        let manifest = self.download(fetcher).await?;
 
         self.name = Some(manifest.name.clone());
+        state.add_registry(self).await?;
 
         Ok(())
     }
@@ -59,11 +63,26 @@ impl Registry {
     }
 
     /// Fetches the manifest from the registry and stores updates in the database.
-    pub async fn update(&mut self, state: &State, fetcher: &impl Fetcher) -> Result<()> {
-        let manifest = self.fetch(fetcher).await?;
+    pub async fn fetch(&mut self, state: &State, fetcher: &impl Fetcher) -> Result<()> {
+        let manifest = self.download(fetcher).await?;
 
         // TODO: Keep and compare a manifest hash to avoid unnecessary updates.
 
+        // Remove packages that are no longer in the manifest.
+        let know_packages = state.known_packages_for_registry(self).await?;
+        for pkg in &know_packages {
+            if !manifest.packages.contains(pkg) {
+                state
+                    .remove_known_package(&KnownPackageSpec {
+                        name: pkg.name.clone(),
+                        version: pkg.version.clone(),
+                        requested_version: String::new(),
+                    })
+                    .await?;
+            }
+        }
+
+        // Add new packages.
         state.add_known_packages(&manifest.packages).await?;
 
         // Update name if changed.
@@ -75,7 +94,7 @@ impl Registry {
     }
 
     /// Fetches the manifest from the registry.
-    async fn fetch(&self, fetcher: &impl Fetcher) -> Result<Manifest> {
+    async fn download(&self, fetcher: &impl Fetcher) -> Result<Manifest> {
         let s = fetcher.fetch(self).await?;
         let manifest: Manifest = s.parse().context("failed to parse manifest")?;
         Ok(manifest)
@@ -155,6 +174,17 @@ impl FromStr for Uri {
     }
 }
 
+#[cfg(test)]
+impl Default for Registry {
+    fn default() -> Self {
+        Self {
+            name: Some("test".into()),
+            uri: "https://example.invalid/test".into(),
+            last_fetched: None,
+        }
+    }
+}
+
 /// A fetcher fetches a manifest from a registry.
 ///
 /// This trait exists so that we can mock out fetching for tests.
@@ -192,6 +222,22 @@ pub struct MockFetcher {
 }
 
 #[cfg(test)]
+impl MockFetcher {
+    /// Creates a new mock fetcher that returns a manifest with the given packages.
+    pub fn with_packages(pkgs: &[Package]) -> Self {
+        let manifest = Manifest {
+            schema_version: 1,
+            name: "test".into(),
+            packages: pkgs.into(),
+            ..Default::default()
+        };
+        Self {
+            manifest: toml::to_string_pretty(&manifest).unwrap(),
+        }
+    }
+}
+
+#[cfg(test)]
 impl Default for MockFetcher {
     fn default() -> Self {
         Self {
@@ -199,7 +245,6 @@ impl Default for MockFetcher {
                 schema_version = 1
                 name = "test"
                 uri = "https://example.invalid/test"
-                version = "0.1.0"
                 description = "A test manifest"
 
                 [[packages]]
@@ -243,9 +288,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_initialized() {
+        let state = State::load(":memory:").await.unwrap();
         let mut registry = Registry::new("https://example.invalid");
         assert!(!registry.is_initialized());
-        registry.initialize(&MockFetcher::default()).await.unwrap();
+        registry
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
         assert!(registry.is_initialized());
     }
 
@@ -269,10 +318,12 @@ mod tests {
     async fn test_update_registry() {
         let state = State::load(":memory:").await.unwrap();
         let mut registry = Registry::new("https://example.invalid");
-        registry.initialize(&MockFetcher::default()).await.unwrap();
-        state.add_registry(&registry).await.unwrap();
         registry
-            .update(&state, &MockFetcher::default())
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
+        registry
+            .fetch(&state, &MockFetcher::default())
             .await
             .unwrap();
         assert_eq!(registry.name, Some("test".into()));

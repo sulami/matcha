@@ -2,7 +2,7 @@ use std::{fmt::Display, process::Stdio, str::FromStr};
 
 use anyhow::{anyhow, Context, Error, Result};
 use futures_util::StreamExt;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::{types::Json, FromRow};
 use tempfile::TempDir;
 use tokio::{
@@ -15,7 +15,7 @@ use url::Url;
 use crate::{download::download_stream, workspace::Workspace};
 
 /// Manifest metadata.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 pub struct Manifest {
     /// The schema version of the manifest.
     pub schema_version: u32,
@@ -92,7 +92,7 @@ impl FromStr for Manifest {
 }
 
 /// A package, as described by a registry manifest.
-#[derive(Debug, FromRow, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, FromRow, Serialize, Deserialize, Default)]
 pub struct Package {
     /// The name of the package.
     pub name: String,
@@ -111,6 +111,7 @@ pub struct Package {
     /// The artifacts of the package after building.
     pub artifacts: Json<Option<Vec<String>>>,
     /// The registry this package is from.
+    #[serde(skip)]
     pub registry: String,
 }
 

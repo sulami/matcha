@@ -430,8 +430,7 @@ async fn list_packages(state: &State, workspace: &Workspace) -> Result<()> {
 /// Adds a registry.
 async fn add_registry(state: &State, uri: &str, fetcher: &impl Fetcher) -> Result<()> {
     let mut registry = Registry::new(uri);
-    registry.initialize(fetcher).await?;
-    state.add_registry(&registry).await?;
+    registry.initialize(state, fetcher).await?;
 
     eprintln!("Added registry {}", registry);
     Ok(())
@@ -473,7 +472,7 @@ async fn ensure_registries_are_current(
         if force || registry.should_update() {
             let state = state.clone();
             let fetcher = fetcher.clone();
-            set.spawn(async move { registry.update(&state, &fetcher).await });
+            set.spawn(async move { registry.fetch(&state, &fetcher).await });
         }
     }
 
@@ -577,8 +576,7 @@ mod tests {
     async fn setup_state_with_registry() -> Result<State> {
         let state = State::load(":memory:").await?;
         let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await?;
-        state.add_registry(&registry).await?;
+        registry.initialize(&state, &MockFetcher::default()).await?;
         ensure_registries_are_current(&state, &MockFetcher::default(), false).await?;
         Ok(state)
     }
@@ -802,5 +800,61 @@ mod tests {
 
         let result = add_workspace(&state, name).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_update_registry_picks_up_new_packages() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry
+            .initialize(&state, &MockFetcher::with_packages(&[]))
+            .await
+            .unwrap();
+        registry
+            .fetch(&state, &MockFetcher::with_packages(&[]))
+            .await
+            .unwrap();
+        assert!(state
+            .known_packages_for_registry(&registry)
+            .await
+            .unwrap()
+            .is_empty());
+
+        ensure_registries_are_current(&state, &MockFetcher::default(), true)
+            .await
+            .unwrap();
+        assert!(!state
+            .known_packages_for_registry(&registry)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_update_registry_removes_gone_packages() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
+        registry
+            .fetch(&state, &MockFetcher::default())
+            .await
+            .unwrap();
+        assert!(!state
+            .known_packages_for_registry(&registry)
+            .await
+            .unwrap()
+            .is_empty());
+
+        ensure_registries_are_current(&state, &MockFetcher::with_packages(&[]), true)
+            .await
+            .unwrap();
+        assert!(state
+            .known_packages_for_registry(&registry)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

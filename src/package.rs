@@ -381,8 +381,10 @@ mod tests {
     async fn test_resolve_known_version() {
         let state = State::load(":memory:").await.unwrap();
         let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await.unwrap();
-        state.add_registry(&registry).await.unwrap();
+        registry
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
         state
             .add_known_packages(&[ManifestPackage {
                 name: "foo".to_string(),

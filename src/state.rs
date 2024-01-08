@@ -257,6 +257,18 @@ impl State {
         Ok(())
     }
 
+    /// Returns all known packages for a registry.
+    pub async fn known_packages_for_registry(&self, reg: &Registry) -> Result<Vec<Package>> {
+        let pkgs = sqlx::query_as::<_, Package>(
+            "SELECT * FROM known_packages WHERE registry = $1 ORDER BY name ASC, version DESC",
+        )
+        .bind(&reg.name)
+        .fetch_all(&self.db)
+        .await
+        .context("failed to fetch known packages from database")?;
+        Ok(pkgs)
+    }
+
     /// Adds known packages to the database.
     pub async fn add_known_packages(&self, pkgs: &[Package]) -> Result<()> {
         for pkg in pkgs {
@@ -350,6 +362,17 @@ impl State {
         Ok(pkg)
     }
 
+    /// Removes a known package.
+    pub async fn remove_known_package(&self, pkg: &KnownPackageSpec) -> Result<()> {
+        sqlx::query("DELETE FROM known_packages WHERE name = $1 AND version = $2")
+            .bind(&pkg.name)
+            .bind(&pkg.version)
+            .execute(&self.db)
+            .await
+            .context("failed to remove known package from database")?;
+        Ok(())
+    }
+
     /// Adds a workspace.
     pub async fn add_workspace(&self, workspace: &Workspace) -> Result<()> {
         sqlx::query("INSERT INTO workspaces (name) VALUES ($1)")
@@ -403,8 +426,7 @@ mod tests {
     async fn setup_state_with_registry() -> Result<State> {
         let state = State::load(":memory:").await?;
         let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await?;
-        state.add_registry(&registry).await?;
+        registry.initialize(&state, &MockFetcher::default()).await?;
         Ok(state)
     }
 
@@ -494,9 +516,10 @@ mod tests {
     async fn test_add_registry_refuses_same_name_twice() {
         let state = State::load(":memory:").await.unwrap();
         let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await.unwrap();
-        state.add_registry(&registry).await.unwrap();
-        assert!(state.add_registry(&registry).await.is_err());
+        registry
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -545,8 +568,10 @@ mod tests {
     async fn test_update_registry() {
         let state = State::load(":memory:").await.unwrap();
         let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&MockFetcher::default()).await.unwrap();
-        state.add_registry(&registry).await.unwrap();
+        registry
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
 
         let new_name = "foo".to_string();
         let last_fetched = OffsetDateTime::now_utc();
@@ -733,5 +758,55 @@ mod tests {
         let state = State::load(":memory:").await.unwrap();
         let workspace = state.get_workspace("global").await.unwrap().unwrap();
         assert_eq!(workspace.name, "global");
+    }
+
+    #[tokio::test]
+    async fn test_known_packages_for_registry() {
+        let state = setup_state_with_registry().await.unwrap();
+
+        let pkgs = vec![
+            Package {
+                name: "foo".to_string(),
+                version: "1.0.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+            Package {
+                name: "bar".to_string(),
+                version: "1.0.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+            Package {
+                name: "baz".to_string(),
+                version: "1.0.0".to_string(),
+                registry: "test".to_string(),
+                ..Default::default()
+            },
+        ];
+        state.add_known_packages(&pkgs).await.unwrap();
+        let results = state
+            .known_packages_for_registry(&Registry::default())
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].name, "bar");
+        assert_eq!(results[1].name, "baz");
+        assert_eq!(results[2].name, "foo");
+    }
+
+    #[tokio::test]
+    async fn test_remove_known_package() {
+        let state = setup_state_with_registry().await.unwrap();
+
+        state
+            .remove_known_package(&known_package("test-package", "0.1.0"))
+            .await
+            .unwrap();
+        let results = state
+            .known_packages_for_registry(&Registry::default())
+            .await
+            .unwrap();
+        assert!(results.is_empty());
     }
 }
