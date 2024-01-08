@@ -1,11 +1,14 @@
 use std::{fmt::Display, future::Future, path::PathBuf, str::FromStr, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use sqlx::{sqlite::SqliteRow, FromRow, Row};
 use time::OffsetDateTime;
 use tokio::fs::read_to_string;
 
-use crate::{download::download_file, manifest::Manifest, package::KnownPackageSpec, state::State};
+use crate::{
+    download::download_file, manifest::Manifest, package::KnownPackageSpec, state::State,
+    util::is_file_system_safe,
+};
 
 #[cfg(test)]
 use crate::manifest::Package;
@@ -67,6 +70,14 @@ impl Registry {
         let manifest = self.download(fetcher).await?;
 
         // TODO: Keep and compare a manifest hash to avoid unnecessary updates.
+
+        if manifest
+            .packages
+            .iter()
+            .any(|p| !is_file_system_safe(&p.name))
+        {
+            return Err(anyhow!("invalid package name"));
+        }
 
         // Remove packages that are no longer in the manifest.
         let know_packages = state.known_packages_for_registry(self).await?;
@@ -328,5 +339,24 @@ mod tests {
             .unwrap();
         assert_eq!(registry.name, Some("test".into()));
         assert!(registry.last_fetched.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_update_registry_refuses_unsafe_package_names() {
+        let state = State::load(":memory:").await.unwrap();
+        let mut registry = Registry::new("https://example.invalid");
+        registry
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
+        let unsafe_package = Package {
+            name: "test/package".into(),
+            version: "0.1.0".into(),
+            ..Default::default()
+        };
+        assert!(registry
+            .fetch(&state, &MockFetcher::with_packages(&[unsafe_package]))
+            .await
+            .is_err());
     }
 }

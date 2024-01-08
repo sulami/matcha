@@ -14,12 +14,14 @@ pub(crate) mod package;
 pub(crate) mod registry;
 pub(crate) mod state;
 pub(crate) mod ui;
+pub(crate) mod util;
 pub(crate) mod workspace;
 
 use package::{InstalledPackageSpec, KnownPackageSpec, PackageRequest};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use ui::create_progress_bar;
+use util::is_file_system_safe;
 use workspace::Workspace;
 
 /// The root directory that holds all the workspaces.
@@ -508,11 +510,8 @@ async fn search_packages(state: &State, query: &str, all_versions: bool) -> Resu
 
 /// Adds a workspace.
 async fn add_workspace(state: &State, name: &str) -> Result<()> {
-    if name
-        .chars()
-        .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
-    {
-        return Err(anyhow!("workspace names can contain [a-zA-Z0-9-_] only"));
+    if !is_file_system_safe(name) {
+        return Err(anyhow!("workspace names can contain [a-zA-Z0-9._-] only"));
     }
 
     if state.get_workspace(name).await?.is_some() {
