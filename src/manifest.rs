@@ -117,27 +117,25 @@ pub struct Package {
 impl Package {
     /// Downloads and builds the package.
     pub async fn build(&self, workspace: &Workspace) -> Result<()> {
-        let Some(source) = &self.source else {
-            // Nothing to do here.
-            return Ok(());
-        };
-
-        let source = Url::parse(source).context("invalid source URL")?;
-
         // Create a temporary working directory.
         let temp_dir = TempDir::new()?;
 
-        // Stream the download to a file.
-        let (_size, mut download) = download_stream(source.as_str()).await?;
-        let download_file_name = source
-            .path_segments()
-            .ok_or(anyhow!("invalid package download source"))?
-            .last()
-            .unwrap_or("download");
-        let mut file = File::create(temp_dir.path().join(download_file_name)).await?;
-        while let Some(chunk) = download.next().await {
-            let chunk = chunk?;
-            file.write_all(&chunk).await?;
+        // Download the package source, if any.
+        if let Some(source) = &self.source {
+            let source = Url::parse(source).context("invalid source URL")?;
+
+            // Stream the download to a file.
+            let (_size, mut download) = download_stream(source.as_str()).await?;
+            let download_file_name = source
+                .path_segments()
+                .ok_or(anyhow!("invalid package download source"))?
+                .last()
+                .unwrap_or("download");
+            let mut file = File::create(temp_dir.path().join(download_file_name)).await?;
+            while let Some(chunk) = download.next().await {
+                let chunk = chunk?;
+                file.write_all(&chunk).await?;
+            }
         }
 
         // Perform build steps, if any.
@@ -163,8 +161,13 @@ impl Package {
             }
         }
 
-        // Copy artifacts to the workspace.
+        // Create the package directory.
         let install_path = workspace.directory()?.join(&self.name);
+        create_dir_all(&install_path)
+            .await
+            .context("failed to create package directory")?;
+
+        // Copy artifacts to the workspace, if any.
         if let Some(artifacts) = &*self.artifacts {
             for artifact in artifacts {
                 if artifact.starts_with('/') {
