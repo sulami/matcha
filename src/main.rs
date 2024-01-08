@@ -311,12 +311,14 @@ enum RegistryCommand {
     Fetch,
 }
 
+/// Returns the current value of $PATH.
+fn current_path() -> String {
+    var("PATH").unwrap_or_else(|_| "".to_string())
+}
+
 /// Checks if the current workspace bin dir is in $PATH, and emit a message if it isn't.
 fn check_path_for_workspace(workspace: &Workspace) {
-    let Ok(path) = env::var("PATH") else {
-        return;
-    };
-
+    let path = current_path();
     let bin_dir = workspace.bin_directory().unwrap();
     if !path.split(':').any(|p| p == bin_dir.to_str().unwrap()) {
         eprintln!(
@@ -546,15 +548,22 @@ async fn list_workspaces(state: &State) -> Result<()> {
 }
 
 /// Runs a shell in the context of a workspace.
-async fn workspace_shell(state: &State, workspace: &str) -> Result<()> {
-    if state.get_workspace(workspace).await?.is_none() {
-        return Err(anyhow!("workspace {} does not exist", workspace));
-    }
+async fn workspace_shell(state: &State, workspace_name: &str) -> Result<()> {
+    let Some(workspace) = state.get_workspace(workspace_name).await? else {
+        return Err(anyhow!("workspace {} does not exist", workspace_name));
+    };
 
+    let patched_path = format!(
+        "{}:{}",
+        workspace.bin_directory()?.to_str().ok_or(anyhow!(
+            "failed to convert workspace bin directory to string"
+        ))?,
+        current_path()
+    );
     let system_shell = var("SHELL").unwrap_or_else(|_| "zsh".to_string());
     tokio::process::Command::new(system_shell)
-        // TODO Patch the $PATH to include the workspace's bin directory.
-        .env("PKG_WORKSPACE", workspace)
+        .env("MATCHA_WORKSPACE", &workspace.name)
+        .env("PATH", &patched_path)
         .spawn()
         .context("failed to run workspace shell")?
         .wait()
