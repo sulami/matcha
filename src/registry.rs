@@ -3,6 +3,7 @@ use std::{fmt::Display, future::Future, path::PathBuf, str::FromStr, time::Durat
 use anyhow::{Context, Result};
 use sqlx::{sqlite::SqliteRow, FromRow, Row};
 use time::OffsetDateTime;
+use tokio::fs::read_to_string;
 
 use crate::{download::download_file, manifest::Manifest, state::State};
 
@@ -169,7 +170,7 @@ pub struct DefaultFetcher;
 impl Fetcher for DefaultFetcher {
     async fn fetch(&self, reg: &Registry) -> Result<String> {
         let s = match &reg.uri {
-            Uri::File(path) => tokio::fs::read_to_string(path)
+            Uri::File(path) => read_to_string(path)
                 .await
                 .context("failed to read manifest at {path}")?,
             Uri::Http(uri) | Uri::Https(uri) => {

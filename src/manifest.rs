@@ -5,7 +5,11 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Deserializer};
 use sqlx::{types::Json, FromRow};
 use tempfile::TempDir;
-use tokio::{fs::File, io::AsyncWriteExt, process::Command};
+use tokio::{
+    fs::{copy, create_dir_all, metadata, read_dir, remove_file, symlink, File},
+    io::AsyncWriteExt,
+    process::Command,
+};
 use url::Url;
 
 use crate::{download::download_stream, workspace::Workspace};
@@ -170,24 +174,21 @@ impl Package {
                 let relative_location = artifact.strip_prefix(temp_dir.path())?;
                 let target_file = install_path.join(relative_location);
                 let target_dir = target_file.parent().unwrap();
-                tokio::fs::create_dir_all(&target_dir).await?;
-                tokio::fs::copy(&artifact, &target_file).await?;
+                create_dir_all(&target_dir).await?;
+                copy(&artifact, &target_file).await?;
             }
         }
 
         // Setup symlinks from workspace/package/bin to workspace/bin
         let bin_path = install_path.join("bin");
         let workspace_bin_path = workspace.bin_directory()?;
-        if tokio::fs::metadata(&bin_path)
-            .await
-            .is_ok_and(|m| m.is_dir())
-        {
-            let mut read_dir = tokio::fs::read_dir(&bin_path).await?;
+        if metadata(&bin_path).await.is_ok_and(|m| m.is_dir()) {
+            let mut read_dir = read_dir(&bin_path).await?;
             while let Some(entry) = read_dir.next_entry().await? {
                 let target = entry.path();
                 let link = workspace_bin_path.join(entry.file_name());
-                tokio::fs::remove_file(&link).await.ok();
-                tokio::fs::symlink(&target, &link).await?;
+                remove_file(&link).await.ok();
+                symlink(&target, &link).await?;
             }
         }
 
