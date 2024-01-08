@@ -3,10 +3,10 @@ use std::{fmt::Display, process::Stdio, str::FromStr};
 use anyhow::{anyhow, Context, Error, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Deserializer, Serialize};
-use sqlx::{types::Json, FromRow};
+use sqlx::FromRow;
 use tempfile::TempDir;
 use tokio::{
-    fs::{copy, create_dir_all, metadata, read_dir, remove_file, symlink, File},
+    fs::{create_dir_all, metadata, read_dir, remove_file, rename, symlink, File},
     io::AsyncWriteExt,
     process::Command,
 };
@@ -43,7 +43,6 @@ impl<'de> Deserialize<'de> for Manifest {
             license: Option<String>,
             source: Option<String>,
             build: Option<String>,
-            artifacts: Option<Vec<String>>,
         }
 
         #[derive(Deserialize)]
@@ -69,7 +68,6 @@ impl<'de> Deserialize<'de> for Manifest {
                 registry: temp_manifest.name.clone(),
                 source: temp_package.source,
                 build: temp_package.build,
-                artifacts: Json(temp_package.artifacts),
             })
             .collect();
 
@@ -108,8 +106,6 @@ pub struct Package {
     pub source: Option<String>,
     /// The build command of the package.
     pub build: Option<String>,
-    /// The artifacts of the package after building.
-    pub artifacts: Json<Option<Vec<String>>>,
     /// The registry this package is from.
     #[serde(skip)]
     pub registry: String,
@@ -118,21 +114,24 @@ pub struct Package {
 impl Package {
     /// Downloads and builds the package.
     pub async fn build(&self, workspace: &Workspace) -> Result<()> {
-        // Create a temporary working directory.
-        let temp_dir = TempDir::new()?;
+        // Create temporary build and output directories.
+        let build_dir = TempDir::new().context("failed to create build directory")?;
+        let output_dir = TempDir::new().context("failed to create output directory")?;
 
         // Download the package source, if any.
+        let mut download_file_name = String::new();
         if let Some(source) = &self.source {
             let source = Url::parse(source).context("invalid source URL")?;
 
             // Stream the download to a file.
             let (_size, mut download) = download_stream(source.as_str()).await?;
-            let download_file_name = source
+            download_file_name = source
                 .path_segments()
                 .ok_or(anyhow!("invalid package download source"))?
                 .last()
-                .unwrap_or("download");
-            let mut file = File::create(temp_dir.path().join(download_file_name)).await?;
+                .unwrap_or("matcha_download")
+                .to_string();
+            let mut file = File::create(build_dir.path().join(&download_file_name)).await?;
             while let Some(chunk) = download.next().await {
                 let chunk = chunk?;
                 file.write_all(&chunk).await?;
@@ -143,18 +142,21 @@ impl Package {
         if let Some(build) = &self.build {
             let output = Command::new("zsh")
                 .arg("-c")
+                // TODO Abort if build command fails.
                 .arg(build)
+                .current_dir(build_dir.path())
+                .env("MATCHA_SOURCE", &download_file_name)
+                .env("MATCHA_OUTPUT", output_dir.path())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .current_dir(temp_dir.path())
                 .spawn()
                 .context("failed to spawn build command")?
                 .wait_with_output()
                 .await?;
 
             if !output.status.success() {
-                eprint!("{}", String::from_utf8_lossy(&output.stderr));
-                eprint!("{}", String::from_utf8_lossy(&output.stdout));
+                eprint!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+                eprint!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
                 return Err(anyhow!(
                     "build command exited with non-zero status code: {}",
                     output.status,
@@ -163,32 +165,20 @@ impl Package {
         }
 
         // Create the package directory.
-        let install_path = workspace.directory()?.join(&self.name);
-        create_dir_all(&install_path)
+        let pkg_path = workspace.directory()?.join(&self.name);
+        create_dir_all(&pkg_path)
             .await
             .context("failed to create package directory")?;
 
-        // Copy artifacts to the workspace, if any.
-        if let Some(artifacts) = &*self.artifacts {
-            for artifact in artifacts {
-                if artifact.starts_with('/') {
-                    return Err(anyhow!("artifact path cannot be absolute"));
-                }
-                let artifact = temp_dir.path().join(artifact);
-                let relative_location = artifact.strip_prefix(temp_dir.path())?;
-                let target_file = install_path.join(relative_location);
-                let target_dir = target_file.parent().unwrap();
-                create_dir_all(&target_dir).await?;
-                copy(&artifact, &target_file).await?;
-            }
-        }
+        // Move build outputs to the workspace/package directory.
+        rename(output_dir, &pkg_path).await?;
 
         // Setup symlinks from workspace/package/bin to workspace/bin
-        let bin_path = install_path.join("bin");
+        let pkg_bin_path = pkg_path.join("bin");
         let workspace_bin_path = workspace.bin_directory()?;
-        if metadata(&bin_path).await.is_ok_and(|m| m.is_dir()) {
-            let mut read_dir = read_dir(&bin_path).await?;
-            while let Some(entry) = read_dir.next_entry().await? {
+        if metadata(&pkg_bin_path).await.is_ok_and(|m| m.is_dir()) {
+            let mut pkg_bin_dir_reader = read_dir(&pkg_bin_path).await?;
+            while let Some(entry) = pkg_bin_dir_reader.next_entry().await? {
                 let target = entry.path();
                 let link = workspace_bin_path.join(entry.file_name());
                 remove_file(&link).await.ok();

@@ -173,3 +173,6 @@ directory, which then goes into `$PATH` for workspace shells.
   `$MATCHA_OUTPUT/bin` in a directory that gets added to `$PATH`, but we will
   want to produce other artifacts such as man pages, config files, etc.
 - License-aware SBOMs, and dependency trees.
+- Reuse already built packages in different workspaces. Right now we build them
+  individually for each workspace, which is less of a foot-gun, but also a bit
+  wasteful. On the bright side, this also doesn't need a Nix-like GC mechanism.

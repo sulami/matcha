@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS known_packages (
     license TEXT,
     source TEXT,
     build TEXT,
-    artifacts TEXT,
     registry TEXT NOT NULL,
 
     PRIMARY KEY (name, version),

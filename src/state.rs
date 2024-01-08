@@ -274,11 +274,11 @@ impl State {
         for pkg in pkgs {
             sqlx::query(
                 "INSERT INTO known_packages
-                    (name, version, description, homepage, license, registry, source, build, artifacts)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    (name, version, description, homepage, license, registry, source, build)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                     ON CONFLICT (name, version)
                     DO UPDATE
-                    SET description = $3, homepage = $4, license = $5, registry = $6, source = $7, build = $8, artifacts = $9
+                    SET description = $3, homepage = $4, license = $5, registry = $6, source = $7, build = $8
                     WHERE name = $1 AND version = $2",
             )
             .bind(&pkg.name)
@@ -289,7 +289,6 @@ impl State {
             .bind(&pkg.registry)
             .bind(&pkg.source)
             .bind(&pkg.build)
-            .bind(&pkg.artifacts)
             .execute(&self.db)
             .await
             .context("failed to insert known package into database")?;

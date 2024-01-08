@@ -1,7 +1,4 @@
-use std::{
-    env::{self, var},
-    path::PathBuf,
-};
+use std::{env::var, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
@@ -39,7 +36,7 @@ async fn main() -> Result<()> {
     match args.command {
         Command::Package(cmd) => match cmd {
             PackageCommand::Install { pkgs, workspace } => {
-                let workspace = get_create_workspace(&state, workspace).await?;
+                let workspace = get_create_workspace(&state, &workspace).await?;
                 ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
                 let pb = create_progress_bar("Installing packages", pkgs.len() as u64);
@@ -69,7 +66,7 @@ async fn main() -> Result<()> {
                 workspace,
             } => {
                 ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
-                let workspace = get_create_workspace(&state, workspace).await?;
+                let workspace = get_create_workspace(&state, &workspace).await?;
 
                 if pkgs.is_empty() {
                     pkgs = state
@@ -104,7 +101,7 @@ async fn main() -> Result<()> {
                     .for_each(|line| println!("{}", line));
             }
             PackageCommand::Remove { pkgs, workspace } => {
-                let workspace = get_create_workspace(&state, workspace).await?;
+                let workspace = get_create_workspace(&state, &workspace).await?;
                 let pb = create_progress_bar("Removing packages", pkgs.len() as u64);
                 let mut set = JoinSet::new();
 
@@ -126,7 +123,7 @@ async fn main() -> Result<()> {
                 }
             }
             PackageCommand::List { workspace } => {
-                let workspace = get_create_workspace(&state, workspace).await?;
+                let workspace = get_create_workspace(&state, &workspace).await?;
                 list_packages(&state, &workspace).await?;
             }
             PackageCommand::Search {
@@ -218,7 +215,7 @@ enum PackageCommand {
     Install {
         /// Workspace to use
         #[arg(short, long, env = "MATCHA_WORKSPACE", default_value = "global")]
-        workspace: Option<String>,
+        workspace: String,
 
         /// Packages to install
         #[arg(required = true)]
@@ -230,7 +227,7 @@ enum PackageCommand {
     Update {
         /// Workspace to use
         #[arg(short, long, env = "MATCHA_WORKSPACE", default_value = "global")]
-        workspace: Option<String>,
+        workspace: String,
 
         /// Select packages to update
         pkgs: Vec<String>,
@@ -241,7 +238,7 @@ enum PackageCommand {
     Remove {
         /// Workspace to use
         #[arg(short, long, env = "MATCHA_WORKSPACE", default_value = "global")]
-        workspace: Option<String>,
+        workspace: String,
 
         /// Packages to uninstall
         #[arg(required = true)]
@@ -334,19 +331,16 @@ export PATH={0}:$PATH",
 /// Gets a workspace by name, if supplied. Otherwise defaults to the global workspace.
 ///
 /// Also ensures the directory actually exists.
-async fn get_create_workspace(state: &State, name: Option<String>) -> Result<Workspace> {
-    let ws = if let Some(name) = name {
-        if let Some(ws) = state
-            .get_workspace(&name)
-            .await
-            .context("failed to retrieve workspace")?
-        {
-            ws
-        } else {
-            return Err(anyhow!("workspace {} does not exist", name));
-        }
+async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
+    let name = if name.is_empty() { "global" } else { name };
+    let ws = if let Some(ws) = state
+        .get_workspace(name)
+        .await
+        .context("failed to retrieve workspace")?
+    {
+        ws
     } else {
-        Workspace::default()
+        return Err(anyhow!("workspace {} does not exist", name));
     };
 
     ws.ensure_exists().await?;
@@ -604,7 +598,7 @@ mod tests {
     async fn test_install_package() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, None).await.unwrap();
+        let workspace = get_create_workspace(&state, "global").await.unwrap();
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
@@ -621,7 +615,7 @@ mod tests {
     async fn test_install_package_refuses_if_package_is_already_installed() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, None).await.unwrap();
+        let workspace = get_create_workspace(&state, "global").await.unwrap();
         let pkg = "test-package@0.1.0";
 
         install_package(&state, pkg, &workspace).await.unwrap();
@@ -633,7 +627,7 @@ mod tests {
     async fn test_uninstall_package() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, None).await.unwrap();
+        let workspace = get_create_workspace(&state, "global").await.unwrap();
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
@@ -653,7 +647,7 @@ mod tests {
     async fn test_uninstall_package_refuses_if_package_is_not_installed() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, None).await.unwrap();
+        let workspace = get_create_workspace(&state, "global").await.unwrap();
         let pkg = "test-package@0.1.0";
 
         let result = uninstall_package(&state, pkg, &workspace).await;
@@ -664,7 +658,7 @@ mod tests {
     async fn test_list_packages() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, None).await.unwrap();
+        let workspace = get_create_workspace(&state, "global").await.unwrap();
         let pkg = "test-package@0.1.0";
 
         install_package(&state, pkg, &workspace).await.unwrap();
@@ -675,7 +669,7 @@ mod tests {
     async fn test_list_packages_empty() {
         let state = setup_state_with_registry().await.unwrap();
         let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, None).await.unwrap();
+        let workspace = get_create_workspace(&state, "global").await.unwrap();
         list_packages(&state, &workspace).await.unwrap();
     }
 
@@ -864,5 +858,21 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_create_workspace_defaults_to_global() {
+        let state = State::load(":memory:").await.unwrap();
+        let _workspace_dir = temp_workspace_directory().unwrap();
+        let workspace = get_create_workspace(&state, "").await.unwrap();
+        assert_eq!(workspace.name, "global");
+    }
+
+    #[tokio::test]
+    async fn test_get_create_workspace_refuses_nonexistent() {
+        let state = State::load(":memory:").await.unwrap();
+        let _workspace_dir = temp_workspace_directory().unwrap();
+        let result = get_create_workspace(&state, "test").await;
+        assert!(result.is_err());
     }
 }
