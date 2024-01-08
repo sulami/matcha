@@ -1,9 +1,9 @@
-use std::{fmt::Display, path::PathBuf, str::FromStr};
+use std::{fmt::Display, str::FromStr};
 
 use anyhow::{anyhow, Context, Error, Result};
 use sqlx::FromRow;
 
-use crate::{state::State, workspace::Workspace, WORKSPACE_ROOT};
+use crate::{state::State, workspace::Workspace};
 
 /// A package name and maybe a version, which needs resolution in some context.
 #[derive(Clone, Debug)]
@@ -212,15 +212,6 @@ impl InstalledPackageSpec {
         }
     }
 
-    /// Returns the path to this package's files in the current workspace.
-    pub fn directory(&self) -> PathBuf {
-        WORKSPACE_ROOT
-            .get()
-            .expect("workspace directory not initialized")
-            .join(&self.name)
-            .join(&self.version)
-    }
-
     /// Removes this package's files from a workspace.
     pub async fn remove(&self, workspace: &Workspace) -> Result<()> {
         workspace
@@ -232,7 +223,17 @@ impl InstalledPackageSpec {
 
 impl Display for InstalledPackageSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}@{}", self.name, self.version)
+        write!(
+            f,
+            "{}@{} from {}",
+            self.name,
+            self.version,
+            if self.requested_version.is_empty() {
+                "latest"
+            } else {
+                &self.requested_version
+            }
+        )
     }
 }
 

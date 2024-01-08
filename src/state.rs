@@ -92,9 +92,7 @@ impl State {
         workspace: &Workspace,
     ) -> Result<Vec<InstalledPackageSpec>> {
         let packages = sqlx::query_as::<_, InstalledPackageSpec>(
-            r"SELECT name, version, requested_version
-            FROM installed_packages
-            WHERE workspace = $1",
+            "SELECT * FROM installed_packages WHERE workspace = $1",
         )
         .bind(&workspace.name)
         .fetch_all(&self.db)
