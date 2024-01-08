@@ -1,4 +1,4 @@
-use std::{fmt::Display, str::FromStr};
+use std::{fmt::Display, process::Stdio, str::FromStr};
 
 use anyhow::{anyhow, Context, Error, Result};
 use futures_util::StreamExt;
@@ -141,6 +141,8 @@ impl Package {
             let output = Command::new("zsh")
                 .arg("-c")
                 .arg(build)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .current_dir(temp_dir.path())
                 .spawn()
                 .context("failed to spawn build command")?
@@ -158,20 +160,34 @@ impl Package {
         }
 
         // Copy artifacts to the workspace.
+        let install_path = workspace.directory()?.join(&self.name);
         if let Some(artifacts) = &*self.artifacts {
             for artifact in artifacts {
                 if artifact.starts_with('/') {
                     return Err(anyhow!("artifact path cannot be absolute"));
                 }
                 let artifact = temp_dir.path().join(artifact);
-                if let Some(parent) = artifact.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-                tokio::fs::copy(
-                    &artifact,
-                    workspace.path()?.join(artifact.file_name().unwrap()),
-                )
-                .await?;
+                let relative_location = artifact.strip_prefix(temp_dir.path())?;
+                let target_file = install_path.join(relative_location);
+                let target_dir = target_file.parent().unwrap();
+                tokio::fs::create_dir_all(&target_dir).await?;
+                tokio::fs::copy(&artifact, &target_file).await?;
+            }
+        }
+
+        // Setup symlinks from workspace/package/bin to workspace/bin
+        let bin_path = install_path.join("bin");
+        let workspace_bin_path = workspace.bin_directory()?;
+        if tokio::fs::metadata(&bin_path)
+            .await
+            .is_ok_and(|m| m.is_dir())
+        {
+            let mut read_dir = tokio::fs::read_dir(&bin_path).await?;
+            while let Some(entry) = read_dir.next_entry().await? {
+                let target = entry.path();
+                let link = workspace_bin_path.join(entry.file_name());
+                tokio::fs::remove_file(&link).await.ok();
+                tokio::fs::symlink(&target, &link).await?;
             }
         }
 

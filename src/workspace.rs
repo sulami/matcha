@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
+use std::{fmt::Display, ops::Deref, path::PathBuf};
 
 use anyhow::{Context, Result};
 use sqlx::FromRow;
@@ -20,23 +20,28 @@ impl Workspace {
         }
     }
 
-    /// Creates the directory for the workspace, if it doesn't exist.
-    pub async fn ensure_exists(&self) -> Result<()> {
+    /// Returns the directory of the workspace.
+    pub fn directory(&self) -> Result<PathBuf> {
         let workspace_directory = WORKSPACE_DIRECTORY
             .get()
             .context("workspace directory not initialized")?;
-        tokio::fs::create_dir_all(workspace_directory.join(&self.name))
+        let dir = shellexpand::tilde(workspace_directory.join(&self.name).to_str().unwrap())
+            .deref()
+            .into();
+        Ok(dir)
+    }
+
+    /// Returns the bin directory of the workspace.
+    pub fn bin_directory(&self) -> Result<PathBuf> {
+        Ok(self.directory()?.join("bin"))
+    }
+
+    /// Creates the directory for the workspace, if it doesn't exist.
+    pub async fn ensure_exists(&self) -> Result<()> {
+        tokio::fs::create_dir_all(self.directory()?.join("bin"))
             .await
             .context("failed to create workspace root")?;
         Ok(())
-    }
-
-    /// Returns the path to the workspace.
-    pub fn path(&self) -> Result<PathBuf> {
-        let workspace_directory = WORKSPACE_DIRECTORY
-            .get()
-            .context("workspace directory not initialized")?;
-        Ok(workspace_directory.join(&self.name))
     }
 
     /// Removes a package's files from this workspace.
