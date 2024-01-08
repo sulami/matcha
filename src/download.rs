@@ -9,17 +9,9 @@ use tokio::sync::watch::Sender;
 /// Also accepts a progress channel, which will be sent the ratio of bytes
 /// downloaded to total bytes.
 pub async fn download_file(url: &str, progress: Option<Sender<usize>>) -> Result<Vec<u8>> {
-    let client = Client::new();
-    let resp = client
-        .get(url)
-        .header("User-Agent", "matcha")
-        .send()
-        .await?;
-
-    let content_length = resp.content_length().unwrap_or(0) as usize;
+    let (content_length, mut stream) = download_stream(url).await?;
     let mut bytes = vec![];
     let mut downloaded = 0;
-    let mut stream = resp.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
