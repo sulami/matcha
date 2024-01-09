@@ -343,8 +343,6 @@ async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
         return Err(anyhow!("workspace {} does not exist", name));
     };
 
-    ws.ensure_exists().await?;
-
     Ok(ws)
 }
 
@@ -361,7 +359,7 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
     }
 
     let pkg = state.get_package(&pkg_spec).await?;
-    pkg.build(workspace).await?;
+    pkg.install(workspace).await?;
 
     state
         .add_installed_package(&pkg_spec, workspace)
@@ -381,7 +379,11 @@ async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Resu
 
     if let Some(new_pkg) = existing_pkg.available_update(state).await? {
         // Install the new version
-        state.get_package(&new_pkg).await?.build(workspace).await?;
+        state
+            .get_package(&new_pkg)
+            .await?
+            .install(workspace)
+            .await?;
         // Remove the old one
         existing_pkg.remove(workspace).await?;
         state
@@ -514,7 +516,7 @@ async fn add_workspace(state: &State, name: &str) -> Result<()> {
         return Err(anyhow!("workspace {} already exists", name));
     }
 
-    state.add_workspace(&Workspace::new(name)).await?;
+    state.add_workspace(&Workspace::new(name).await?).await?;
     Ok(())
 }
 
@@ -568,11 +570,9 @@ async fn workspace_shell(state: &State, workspace_name: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::{tempdir, TempDir};
-
     use super::*;
 
-    use crate::registry::MockFetcher;
+    use crate::{registry::MockFetcher, workspace::test_workspace};
 
     /// Convenience function to setup the default test state.
     async fn setup_state_with_registry() -> Result<State> {
@@ -583,39 +583,25 @@ mod tests {
         Ok(state)
     }
 
-    /// Creates a temporary workspace directory and sets it as the global workspace directory.
-    ///
-    /// Ensure you keep this in scope, as the directory will be deleted when it is dropped.
-    fn temp_workspace_directory() -> Result<TempDir> {
-        let dir = tempdir().context("failed to create temporary workspace directory")?;
-        WORKSPACE_ROOT
-            .set(dir.path().to_path_buf())
-            .expect("double init for WORKSPACE_DIRECTORY");
-        Ok(dir)
-    }
-
     #[tokio::test]
     async fn test_install_package() {
         let state = setup_state_with_registry().await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, "global").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
+
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
         install_package(&state, &pkg.name, &workspace)
             .await
             .unwrap();
-        assert!(state
-            .is_package_installed(&pkg, &Workspace::default())
-            .await
-            .unwrap());
+        assert!(state.is_package_installed(&pkg, &workspace).await.unwrap());
     }
 
     #[tokio::test]
     async fn test_install_package_refuses_if_package_is_already_installed() {
         let state = setup_state_with_registry().await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, "global").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
+
         let pkg = "test-package@0.1.0";
 
         install_package(&state, pkg, &workspace).await.unwrap();
@@ -626,8 +612,8 @@ mod tests {
     #[tokio::test]
     async fn test_uninstall_package() {
         let state = setup_state_with_registry().await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, "global").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
+
         let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
         let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
 
@@ -637,17 +623,14 @@ mod tests {
         uninstall_package(&state, &pkg.name, &workspace)
             .await
             .unwrap();
-        assert!(!state
-            .is_package_installed(&pkg, &Workspace::default())
-            .await
-            .unwrap());
+        assert!(!state.is_package_installed(&pkg, &workspace).await.unwrap());
     }
 
     #[tokio::test]
     async fn test_uninstall_package_refuses_if_package_is_not_installed() {
         let state = setup_state_with_registry().await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, "global").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
+
         let pkg = "test-package@0.1.0";
 
         let result = uninstall_package(&state, pkg, &workspace).await;
@@ -657,8 +640,8 @@ mod tests {
     #[tokio::test]
     async fn test_list_packages() {
         let state = setup_state_with_registry().await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, "global").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
+
         let pkg = "test-package@0.1.0";
 
         install_package(&state, pkg, &workspace).await.unwrap();
@@ -668,8 +651,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_packages_empty() {
         let state = setup_state_with_registry().await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = get_create_workspace(&state, "global").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
         list_packages(&state, &workspace).await.unwrap();
     }
 
@@ -722,6 +704,8 @@ mod tests {
     #[tokio::test]
     async fn test_add_workspace() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, _workspace) = test_workspace("global").await;
+
         let name = "test";
 
         add_workspace(&state, name).await.unwrap();
@@ -736,6 +720,8 @@ mod tests {
     #[tokio::test]
     async fn test_add_workspace_refuses_same_name_twice() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, _workspace) = test_workspace("global").await;
+
         let name = "test";
 
         add_workspace(&state, name).await.unwrap();
@@ -764,6 +750,8 @@ mod tests {
     #[tokio::test]
     async fn test_list_workspaces() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, _workspace) = test_workspace("global").await;
+
         let name = "test";
 
         add_workspace(&state, name).await.unwrap();
@@ -773,8 +761,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_workspace_with_packages() {
         let state = setup_state_with_registry().await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
-        let workspace = Workspace::new("test");
+        let (_root, workspace) = test_workspace("test").await;
 
         add_workspace(&state, &workspace.name).await.unwrap();
         install_package(&state, "test-package@0.1.0", &workspace)
@@ -863,7 +850,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_create_workspace_defaults_to_global() {
         let state = State::load(":memory:").await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
+        let (_root, _workspace) = test_workspace("global").await;
         let workspace = get_create_workspace(&state, "").await.unwrap();
         assert_eq!(workspace.name, "global");
     }
@@ -871,7 +858,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_create_workspace_refuses_nonexistent() {
         let state = State::load(":memory:").await.unwrap();
-        let _workspace_dir = temp_workspace_directory().unwrap();
+        let (_root, _workspace) = test_workspace("global").await;
         let result = get_create_workspace(&state, "test").await;
         assert!(result.is_err());
     }

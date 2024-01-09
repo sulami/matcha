@@ -2,24 +2,42 @@ use anyhow::Result;
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
-use tokio::sync::watch::Sender;
+
+/// A trait for downloading files.
+pub trait Downloader {
+    /// Downloads a file from a URL, and returns the bytes.
+    async fn download_file(&self, url: &str) -> Result<Vec<u8>>;
+    /// Downloads a file from a URL, and returns the content length and a stream of bytes.
+    async fn download_stream(
+        &self,
+        url: &str,
+    ) -> Result<(usize, impl Stream<Item = reqwest::Result<Bytes>>)>;
+}
+
+/// The default downloader, which uses reqwest.
+pub struct DefaultDownloader;
+
+impl Downloader for DefaultDownloader {
+    async fn download_file(&self, url: &str) -> Result<Vec<u8>> {
+        download_file(url).await
+    }
+
+    async fn download_stream(
+        &self,
+        url: &str,
+    ) -> Result<(usize, impl Stream<Item = reqwest::Result<Bytes>>)> {
+        download_stream(url).await
+    }
+}
 
 /// Downloads a file from a URL, and returns the bytes.
-///
-/// Also accepts a progress channel, which will be sent the ratio of bytes
-/// downloaded to total bytes.
-pub async fn download_file(url: &str, progress: Option<Sender<usize>>) -> Result<Vec<u8>> {
-    let (content_length, mut stream) = download_stream(url).await?;
+pub async fn download_file(url: &str) -> Result<Vec<u8>> {
+    let (_, mut stream) = download_stream(url).await?;
     let mut bytes = vec![];
-    let mut downloaded = 0;
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         bytes.extend_from_slice(&chunk);
-        downloaded += chunk.len();
-        if let Some(tx) = &progress {
-            tx.send(downloaded / content_length)?;
-        }
     }
 
     Ok(bytes)
@@ -40,4 +58,33 @@ pub async fn download_stream(
     let stream = resp.bytes_stream();
 
     Ok((content_length, stream))
+}
+
+#[cfg(test)]
+pub struct MockDownloader {
+    pub file: Vec<u8>,
+}
+
+#[cfg(test)]
+impl MockDownloader {
+    pub fn new(file: Vec<u8>) -> Self {
+        Self { file }
+    }
+}
+
+#[cfg(test)]
+impl Downloader for MockDownloader {
+    async fn download_file(&self, _: &str) -> Result<Vec<u8>> {
+        Ok(self.file.clone())
+    }
+
+    async fn download_stream(
+        &self,
+        _: &str,
+    ) -> Result<(usize, impl Stream<Item = reqwest::Result<Bytes>>)> {
+        Ok((
+            self.file.len(),
+            futures_util::stream::once(async move { Ok(Bytes::from(self.file.clone())) }),
+        ))
+    }
 }

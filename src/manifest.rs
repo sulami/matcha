@@ -6,13 +6,17 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::FromRow;
 use tempfile::TempDir;
 use tokio::{
-    fs::{create_dir_all, metadata, read_dir, remove_file, rename, symlink, File},
+    fs::{create_dir_all, metadata, read_dir, rename, symlink, File},
     io::AsyncWriteExt,
+    pin,
     process::Command,
 };
 use url::Url;
 
-use crate::{download::download_stream, workspace::Workspace};
+use crate::{
+    download::{DefaultDownloader, Downloader},
+    workspace::Workspace,
+};
 
 /// Manifest metadata.
 #[derive(Debug, Default, Serialize)]
@@ -112,11 +116,19 @@ pub struct Package {
 }
 
 impl Package {
-    /// Downloads and builds the package.
-    pub async fn build(&self, workspace: &Workspace) -> Result<()> {
-        // Create temporary build and output directories.
+    /// Downloads, builds, and installs the package.
+    pub async fn install(&self, workspace: &Workspace) -> Result<()> {
+        let (build_dir, download_file_name) = self.download_source(&DefaultDownloader).await?;
+        let output_dir = self.build(&build_dir, &download_file_name).await?;
+        self.install_to_workspace(workspace, &output_dir).await?;
+        Ok(())
+    }
+
+    /// Downloads the package source to a temporary build directory.
+    ///
+    /// Returns the build directory and the name of the downloaded file.
+    async fn download_source(&self, downloader: &impl Downloader) -> Result<(TempDir, String)> {
         let build_dir = TempDir::new().context("failed to create build directory")?;
-        let output_dir = TempDir::new().context("failed to create output directory")?;
 
         // Download the package source, if any.
         let mut download_file_name = String::new();
@@ -124,7 +136,8 @@ impl Package {
             let source = Url::parse(source).context("invalid source URL")?;
 
             // Stream the download to a file.
-            let (_size, mut download) = download_stream(source.as_str()).await?;
+            let (_size, download) = downloader.download_stream(source.as_str()).await?;
+            pin!(download);
             download_file_name = source
                 .path_segments()
                 .ok_or(anyhow!("invalid package download source"))?
@@ -138,6 +151,15 @@ impl Package {
             }
         }
 
+        Ok((build_dir, download_file_name))
+    }
+
+    /// Builds the package.
+    ///
+    /// Returns the output directory.
+    async fn build(&self, build_dir: &TempDir, download_file_name: &str) -> Result<TempDir> {
+        let output_dir = TempDir::new().context("failed to create output directory")?;
+
         // Perform build steps, if any.
         if let Some(build) = &self.build {
             let output = Command::new("zsh")
@@ -145,7 +167,7 @@ impl Package {
                 // TODO Abort if build command fails.
                 .arg(build)
                 .current_dir(build_dir.path())
-                .env("MATCHA_SOURCE", &download_file_name)
+                .env("MATCHA_SOURCE", download_file_name)
                 .env("MATCHA_OUTPUT", output_dir.path())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -164,6 +186,15 @@ impl Package {
             }
         }
 
+        Ok(output_dir)
+    }
+
+    /// Installs the package's build outputs to the workspace.
+    async fn install_to_workspace(
+        &self,
+        workspace: &Workspace,
+        output_dir: &TempDir,
+    ) -> Result<()> {
         // Create the package directory.
         let pkg_path = workspace.directory()?.join(&self.name);
         create_dir_all(&pkg_path)
@@ -181,7 +212,6 @@ impl Package {
             while let Some(entry) = pkg_bin_dir_reader.next_entry().await? {
                 let target = entry.path();
                 let link = workspace_bin_path.join(entry.file_name());
-                remove_file(&link).await.ok();
                 symlink(&target, &link).await?;
             }
         }
@@ -208,6 +238,8 @@ impl Display for Package {
 
 #[cfg(test)]
 mod tests {
+    use crate::download::MockDownloader;
+
     use super::*;
 
     #[test]
@@ -254,6 +286,145 @@ mod tests {
         assert_eq!(
             manifest.packages[0].build,
             Some("cargo build --release".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_download_package_source() {
+        let package = Package {
+            name: "test-package".to_string(),
+            version: "0.1.0".to_string(),
+            registry: "test".to_string(),
+            source: Some("https://example.invalid/test-package/archive/0.1.0.tar.gz".to_string()),
+            ..Default::default()
+        };
+
+        let (build_dir, download_file_name) = package
+            .download_source(&MockDownloader::new(vec![]))
+            .await
+            .unwrap();
+        assert!(build_dir.path().exists());
+        assert!(build_dir.path().is_dir());
+        assert!(download_file_name.ends_with(".tar.gz"));
+    }
+
+    #[tokio::test]
+    async fn test_build_package() {
+        let package = Package {
+            name: "test-package".to_string(),
+            version: "0.1.0".to_string(),
+            registry: "test".to_string(),
+            source: Some("https://example.invalid/test-source".to_string()),
+            build: Some(
+                "mkdir $MATCHA_OUTPUT/bin && cp $MATCHA_SOURCE $MATCHA_OUTPUT/bin/".to_string(),
+            ),
+            ..Default::default()
+        };
+
+        let (build_dir, download_file_name) = package
+            .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
+            .await
+            .unwrap();
+        let output_dir = package
+            .build(&build_dir, &download_file_name)
+            .await
+            .unwrap();
+
+        let output_bin_dir = output_dir.path().join("bin");
+        assert!(output_bin_dir.exists());
+        assert!(output_bin_dir.is_dir());
+        assert!(output_bin_dir.join("test-source").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(output_bin_dir.join("test-source"))
+                .await
+                .unwrap(),
+            "foo"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_build_package_without_source() {
+        let package = Package {
+            name: "test-package".to_string(),
+            version: "0.1.0".to_string(),
+            registry: "test".to_string(),
+            build: Some("echo hullo > $MATCHA_OUTPUT/output".to_string()),
+            ..Default::default()
+        };
+
+        let (build_dir, download_file_name) = package
+            .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
+            .await
+            .unwrap();
+        let output_dir = package
+            .build(&build_dir, &download_file_name)
+            .await
+            .unwrap();
+
+        assert!(output_dir.path().exists());
+        assert!(output_dir.path().is_dir());
+        assert_eq!(
+            tokio::fs::read_to_string(output_dir.path().join("output"))
+                .await
+                .unwrap(),
+            "hullo\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_install_package_to_workspace() {
+        let workspace_root = TempDir::new().unwrap();
+        crate::WORKSPACE_ROOT
+            .set(workspace_root.path().to_owned())
+            .unwrap();
+        let workspace = Workspace::new("test-workspace").await.unwrap();
+        let package = Package {
+            name: "test-package".to_string(),
+            version: "0.1.0".to_string(),
+            registry: "test".to_string(),
+            source: Some("https://example.invalid/test-source".to_string()),
+            build: Some(
+                "mkdir $MATCHA_OUTPUT/bin && cp $MATCHA_SOURCE $MATCHA_OUTPUT/bin/".to_string(),
+            ),
+            ..Default::default()
+        };
+
+        let (build_dir, download_file_name) = package
+            .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
+            .await
+            .unwrap();
+        let output_dir = package
+            .build(&build_dir, &download_file_name)
+            .await
+            .unwrap();
+        package
+            .install_to_workspace(&workspace, &output_dir)
+            .await
+            .unwrap();
+
+        let pkg_path = workspace.directory().unwrap().join(&package.name);
+        assert!(pkg_path.exists());
+        assert!(pkg_path.is_dir());
+        assert!(pkg_path.join("bin").exists());
+        assert!(pkg_path.join("bin").is_dir());
+        assert!(pkg_path.join("bin").join("test-source").exists());
+        assert_eq!(
+            tokio::fs::read_to_string(pkg_path.join("bin").join("test-source"))
+                .await
+                .unwrap(),
+            "foo"
+        );
+
+        let workspace_bin_path = workspace.bin_directory().unwrap();
+        assert!(workspace_bin_path.exists());
+        assert!(workspace_bin_path.is_dir());
+        assert!(workspace_bin_path.join("test-source").exists());
+        assert!(workspace_bin_path.join("test-source").is_file());
+        assert_eq!(
+            tokio::fs::read_to_string(workspace_bin_path.join("test-source"))
+                .await
+                .unwrap(),
+            "foo"
         );
     }
 }

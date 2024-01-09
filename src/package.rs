@@ -256,7 +256,7 @@ mod tests {
     use crate::{
         manifest::Package as ManifestPackage,
         registry::{MockFetcher, Registry},
-        workspace::Workspace,
+        workspace::test_workspace,
     };
 
     /// Returns a known package spec with the given name and version.
@@ -311,8 +311,9 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_version() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
         state
-            .add_installed_package(&known_package("foo", "1.0.0"), &Workspace::default())
+            .add_installed_package(&known_package("foo", "1.0.0"), &workspace)
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -320,7 +321,7 @@ mod tests {
             version: None,
         };
         let spec = pkg
-            .resolve_installed_version(&state, &Workspace::default())
+            .resolve_installed_version(&state, &workspace)
             .await
             .unwrap();
         assert_eq!(spec.version, "1.0.0");
@@ -329,12 +330,13 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_version_fails_if_not_installed() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
         let pkg = PackageRequest {
             name: "foo".to_string(),
             version: None,
         };
         assert!(pkg
-            .resolve_installed_version(&state, &Workspace::default())
+            .resolve_installed_version(&state, &workspace)
             .await
             .is_err());
     }
@@ -342,8 +344,9 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_version_fails_if_this_version_is_not_installed() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
         state
-            .add_installed_package(&known_package("foo", "1.0.0"), &Workspace::default())
+            .add_installed_package(&known_package("foo", "1.0.0"), &workspace)
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -351,7 +354,7 @@ mod tests {
             version: Some("2".to_string()),
         };
         assert!(pkg
-            .resolve_installed_version(&state, &Workspace::default())
+            .resolve_installed_version(&state, &workspace)
             .await
             .is_err());
     }
@@ -359,12 +362,13 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_installed_package_version_fails_if_multiple_matches_installed() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
         state
-            .add_installed_package(&known_package("foo", "1.0.0"), &Workspace::default())
+            .add_installed_package(&known_package("foo", "1.0.0"), &workspace)
             .await
             .unwrap();
         state
-            .add_installed_package(&known_package("foo", "2.0.0"), &Workspace::default())
+            .add_installed_package(&known_package("foo", "2.0.0"), &workspace)
             .await
             .unwrap();
         let pkg = PackageRequest {
@@ -372,7 +376,7 @@ mod tests {
             version: None,
         };
         assert!(pkg
-            .resolve_installed_version(&state, &Workspace::default())
+            .resolve_installed_version(&state, &workspace)
             .await
             .is_err());
     }
@@ -415,8 +419,10 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_known_version_fails_if_this_version_is_not_known() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
+
         state
-            .add_installed_package(&known_package("foo", "1.0.0"), &Workspace::default())
+            .add_installed_package(&known_package("foo", "1.0.0"), &workspace)
             .await
             .unwrap();
         let pkg = PackageRequest {

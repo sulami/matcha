@@ -16,10 +16,14 @@ pub struct Workspace {
 
 impl Workspace {
     /// Creates a new workspace.
-    pub fn new(name: &str) -> Self {
-        Self {
+    ///
+    /// Also ensures the workspace(/bin) directory exists.
+    pub async fn new(name: &str) -> Result<Self> {
+        let ws = Self {
             name: String::from(name),
-        }
+        };
+        ws.ensure_exists().await?;
+        Ok(ws)
     }
 
     /// Returns the directory of the workspace.
@@ -42,7 +46,7 @@ impl Workspace {
     }
 
     /// Creates the directory for the workspace, if it doesn't exist.
-    pub async fn ensure_exists(&self) -> Result<()> {
+    async fn ensure_exists(&self) -> Result<()> {
         create_dir_all(self.directory()?.join("bin"))
             .await
             .context("failed to create workspace root")?;
@@ -76,7 +80,9 @@ impl Workspace {
 
 impl Default for Workspace {
     fn default() -> Self {
-        Workspace::new("global")
+        Self {
+            name: String::from("default"),
+        }
     }
 }
 
@@ -84,4 +90,19 @@ impl Display for Workspace {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.name)
     }
+}
+
+#[cfg(test)]
+/// Creates a test workspace, and also sets the workspace_root to a temporary directory.
+pub async fn test_workspace(name: &str) -> (tempfile::TempDir, Workspace) {
+    let workspace_root = tempfile::tempdir().expect("failed to create test workspace root");
+    crate::WORKSPACE_ROOT
+        .set(workspace_root.path().to_owned())
+        .expect("failed to set workspace root");
+    (
+        workspace_root,
+        Workspace::new(name)
+            .await
+            .expect("failed to create test workspace"),
+    )
 }

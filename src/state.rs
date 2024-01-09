@@ -419,7 +419,7 @@ mod tests {
 
     use time::OffsetDateTime;
 
-    use crate::registry::MockFetcher;
+    use crate::{registry::MockFetcher, workspace::test_workspace};
 
     /// Convenience function to setup the default test state.
     async fn setup_state_with_registry() -> Result<State> {
@@ -441,59 +441,50 @@ mod tests {
     #[tokio::test]
     async fn test_package_add_list_remove() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
         let spec = known_package("test-package", "0.1.0");
         state
-            .add_installed_package(&spec, &Workspace::default())
+            .add_installed_package(&spec, &workspace)
             .await
             .unwrap();
-        let packages = state
-            .installed_packages(&Workspace::default())
-            .await
-            .unwrap();
+        let packages = state.installed_packages(&workspace).await.unwrap();
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, spec.name);
         assert_eq!(packages[0].version, spec.version);
         state
-            .remove_installed_package(&spec.into(), &Workspace::default())
+            .remove_installed_package(&spec.into(), &workspace)
             .await
             .unwrap();
-        let packages = state
-            .installed_packages(&Workspace::default())
-            .await
-            .unwrap();
+        let packages = state.installed_packages(&workspace).await.unwrap();
         assert!(packages.is_empty());
     }
 
     #[tokio::test]
     async fn test_add_package_refuses_same_version_twice() {
         let state = State::load(":memory:").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
         let spec = known_package("test-package", "0.1.0");
         state
-            .add_installed_package(&spec, &Workspace::default())
+            .add_installed_package(&spec, &workspace)
             .await
             .unwrap();
         assert!(state
-            .add_installed_package(&spec, &Workspace::default())
+            .add_installed_package(&spec, &workspace)
             .await
             .is_err());
     }
 
     #[tokio::test]
     async fn test_is_package_installed() {
-        let state = State::load(":memory:").await.unwrap();
+        let state = setup_state_with_registry().await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
         let spec = known_package("test-package", "0.1.0");
-        assert!(!state
-            .is_package_installed(&spec, &Workspace::default())
-            .await
-            .unwrap());
+        assert!(!state.is_package_installed(&spec, &workspace).await.unwrap());
         state
-            .add_installed_package(&spec, &Workspace::default())
+            .add_installed_package(&spec, &workspace)
             .await
             .unwrap();
-        assert!(state
-            .is_package_installed(&spec, &Workspace::default())
-            .await
-            .unwrap());
+        assert!(state.is_package_installed(&spec, &workspace).await.unwrap());
     }
 
     #[tokio::test]
@@ -734,7 +725,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_list_remove_workspace() {
         let state = State::load(":memory:").await.unwrap();
-        let workspace = Workspace::new("test");
+        let (_root, workspace) = test_workspace("test").await;
         state.add_workspace(&workspace).await.unwrap();
         let workspaces = state.workspaces().await.unwrap();
         assert_eq!(workspaces.len(), 2);
@@ -747,7 +738,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_workspace_refuses_same_name_twice() {
         let state = State::load(":memory:").await.unwrap();
-        let workspace = Workspace::new("test");
+        let (_root, workspace) = test_workspace("test").await;
         state.add_workspace(&workspace).await.unwrap();
         assert!(state.add_workspace(&workspace).await.is_err());
     }

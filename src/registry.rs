@@ -215,7 +215,7 @@ impl Fetcher for DefaultFetcher {
                 .await
                 .context("failed to read manifest at {path}")?,
             Uri::Http(uri) | Uri::Https(uri) => {
-                let bytes = download_file(uri, None)
+                let bytes = download_file(uri)
                     .await
                     .context("failed to fetch manifest from {uri}")?;
                 String::from_utf8(bytes).context("failed to parse downloaded manifest as utf-8")?
