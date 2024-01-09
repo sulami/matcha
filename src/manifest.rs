@@ -164,8 +164,7 @@ impl Package {
         if let Some(build) = &self.build {
             let output = Command::new("zsh")
                 .arg("-c")
-                // TODO Abort if build command fails.
-                .arg(build)
+                .arg(format!("set -e\n{build}"))
                 .current_dir(build_dir.path())
                 .env("MATCHA_SOURCE", download_file_name)
                 .env("MATCHA_OUTPUT", output_dir.path())
@@ -177,8 +176,8 @@ impl Package {
                 .await?;
 
             if !output.status.success() {
-                eprint!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-                eprint!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+                eprint!("--- STDERR:\n{}", String::from_utf8_lossy(&output.stderr));
+                eprint!("--- STDOUT:\n{}", String::from_utf8_lossy(&output.stdout));
                 return Err(anyhow!(
                     "build command exited with non-zero status code: {}",
                     output.status,
@@ -343,7 +342,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_build_package_without_source() {
+    async fn test_build_package_without_source() {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
@@ -369,6 +368,25 @@ mod tests {
                 .unwrap(),
             "hullo\n"
         );
+    }
+
+    #[tokio::test]
+    async fn test_build_package_exists_on_first_error() {
+        let package = Package {
+            name: "test-package".to_string(),
+            version: "0.1.0".to_string(),
+            registry: "test".to_string(),
+            build: Some("false\ntrue".to_string()),
+            ..Default::default()
+        };
+
+        let (build_dir, download_file_name) = package
+            .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
+            .await
+            .unwrap();
+        let output_dir = package.build(&build_dir, &download_file_name).await;
+
+        assert!(output_dir.is_err());
     }
 
     #[tokio::test]
