@@ -54,7 +54,8 @@ impl Workspace {
         let pkg_dir = self.directory()?.join(&pkg.name);
 
         // Remove the package's bin symlinks.
-        while let Some(entry) = read_dir(self.bin_directory()?).await?.next_entry().await? {
+        let mut bin_dir_reader = read_dir(self.bin_directory()?).await?;
+        while let Some(entry) = bin_dir_reader.next_entry().await? {
             if entry.metadata().await?.file_type().is_symlink()
                 && read_link(entry.path()).await?.starts_with(&pkg_dir)
             {
