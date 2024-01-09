@@ -1,4 +1,4 @@
-# Macha
+# Matcha
 
 A peaceful package manager.
 
