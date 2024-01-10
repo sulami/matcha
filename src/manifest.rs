@@ -115,13 +115,43 @@ pub struct Package {
     pub registry: String,
 }
 
+/// The build log of a package.
+#[derive(Debug)]
+pub struct BuildLog {
+    /// The package this log is for.
+    pub package_name: String,
+    /// The exit code of the build.
+    pub exit_code: i32,
+    /// The stdout of the build.
+    pub stdout: String,
+    /// The stderr of the build.
+    pub stderr: String,
+}
+
+impl BuildLog {
+    /// Creates a new build log for this package.
+    fn new(package: &Package) -> Self {
+        Self {
+            package_name: format!("{package}"),
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
+    /// Returns whether the build was successful.
+    pub fn is_success(&self) -> bool {
+        self.exit_code == 0
+    }
+}
+
 impl Package {
     /// Downloads, builds, and installs the package.
-    pub async fn install(&self, workspace: &Workspace) -> Result<()> {
+    pub async fn install(&self, workspace: &Workspace) -> Result<BuildLog> {
         let (build_dir, download_file_name) = self.download_source(&DefaultDownloader).await?;
-        let output_dir = self.build(&build_dir, &download_file_name).await?;
+        let (output_dir, log) = self.build(&build_dir, &download_file_name).await?;
         self.install_to_workspace(workspace, &output_dir).await?;
-        Ok(())
+        Ok(log)
     }
 
     /// Downloads the package source to a temporary build directory.
@@ -157,8 +187,13 @@ impl Package {
     /// Builds the package.
     ///
     /// Returns the output directory.
-    async fn build(&self, build_dir: &TempDir, download_file_name: &str) -> Result<TempDir> {
+    async fn build(
+        &self,
+        build_dir: &TempDir,
+        download_file_name: &str,
+    ) -> Result<(TempDir, BuildLog)> {
         let output_dir = TempDir::new().context("failed to create output directory")?;
+        let mut log = BuildLog::new(self);
 
         // Perform build steps, if any.
         if let Some(build) = &self.build {
@@ -175,17 +210,12 @@ impl Package {
                 .wait_with_output()
                 .await?;
 
-            if !output.status.success() {
-                eprint!("--- STDERR:\n{}", String::from_utf8_lossy(&output.stderr));
-                eprint!("--- STDOUT:\n{}", String::from_utf8_lossy(&output.stdout));
-                return Err(anyhow!(
-                    "build command exited with non-zero status code: {}",
-                    output.status,
-                ));
-            }
+            log.exit_code = output.status.code().unwrap_or(1);
+            log.stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            log.stderr = String::from_utf8_lossy(&output.stderr).to_string();
         }
 
-        Ok(output_dir)
+        Ok((output_dir, log))
     }
 
     /// Installs the package's build outputs to the workspace.
@@ -324,7 +354,7 @@ mod tests {
             .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
             .await
             .unwrap();
-        let output_dir = package
+        let (output_dir, _log) = package
             .build(&build_dir, &download_file_name)
             .await
             .unwrap();
@@ -355,7 +385,7 @@ mod tests {
             .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
             .await
             .unwrap();
-        let output_dir = package
+        let (output_dir, _log) = package
             .build(&build_dir, &download_file_name)
             .await
             .unwrap();
@@ -384,9 +414,12 @@ mod tests {
             .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
             .await
             .unwrap();
-        let output_dir = package.build(&build_dir, &download_file_name).await;
+        let (_output_dir, log) = package
+            .build(&build_dir, &download_file_name)
+            .await
+            .unwrap();
 
-        assert!(output_dir.is_err());
+        assert!(!log.is_success());
     }
 
     #[tokio::test]
@@ -411,7 +444,7 @@ mod tests {
             .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
             .await
             .unwrap();
-        let output_dir = package
+        let (output_dir, _log) = package
             .build(&build_dir, &download_file_name)
             .await
             .unwrap();

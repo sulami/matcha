@@ -264,6 +264,11 @@ impl Default for MockFetcher {
                 description = "A test package"
                 homepage = "https://example.invalid/test-package"
                 license = "MIT"
+
+                [[packages]]
+                name = "failing-build"
+                version = "0.1.0"
+                build = "exit 1"
             "#
             .into(),
         }

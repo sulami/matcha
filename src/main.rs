@@ -2,6 +2,7 @@ use std::{env::var, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use manifest::BuildLog;
 use once_cell::sync::OnceCell;
 use tokio::task::JoinSet;
 
@@ -54,9 +55,16 @@ async fn main() -> Result<()> {
                     results.push(result?);
                 }
                 pb.finish_and_clear();
-                let output = results.into_iter().collect::<Result<Vec<String>>>()?;
-                for line in output {
-                    println!("{}", line);
+                let logs = results.into_iter().collect::<Result<Vec<BuildLog>>>()?;
+                for log in logs {
+                    if log.is_success() {
+                        println!("Installed {}", log.package_name);
+                    } else {
+                        println!(
+                            "Failed to install {}, build exited with code {}\nSTDOUT:\n{}STDERR:\n{}",
+                            log.package_name, log.exit_code, log.stdout, log.stderr
+                        );
+                    }
                 }
 
                 check_path_for_workspace(&workspace);
@@ -347,7 +355,7 @@ async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
 }
 
 /// Installs a package.
-async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<String> {
+async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<BuildLog> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let pkg_spec: KnownPackageSpec = pkg_req
         .resolve_known_version(state)
@@ -359,14 +367,16 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
     }
 
     let pkg = state.get_package(&pkg_spec).await?;
-    pkg.install(workspace).await?;
+    let log = pkg.install(workspace).await?;
 
-    state
-        .add_installed_package(&pkg_spec, workspace)
-        .await
-        .context("failed to register installed package")?;
+    if log.is_success() {
+        state
+            .add_installed_package(&pkg_spec, workspace)
+            .await
+            .context("failed to register installed package")?;
+    }
 
-    Ok(format!("Installed {pkg_spec}"))
+    Ok(log)
 }
 
 /// Updates a package.
@@ -861,5 +871,18 @@ mod tests {
         let (_root, _workspace) = test_workspace("global").await;
         let result = get_create_workspace(&state, "test").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_install_package_doesnt_add_package_to_state_if_build_failed() {
+        let state = setup_state_with_registry().await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
+
+        let pkg: PackageRequest = "failing-build@0.1.0".parse().unwrap();
+        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
+
+        let result = install_package(&state, &pkg.name, &workspace).await;
+        assert!(result.is_ok());
+        assert!(!state.is_package_installed(&pkg, &workspace).await.unwrap());
     }
 }
