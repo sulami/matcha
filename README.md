@@ -80,6 +80,48 @@ matcha
   └─fetch
 ```
 
+## How it Works
+
+First a few core concepts:
+- A `registry` is either a file or URL that serves a manifest.
+- A `manifest` is just a collection of packages.
+- A `package` can have different shapes, but all include a name and a version.
+  In the context of a manifest, packages have more metadata, including a source
+  and build instructions.
+- A `workspace` is an environment that uses a selected subset of the installed
+  packages.
+
+Packages are always identified by a name and a version, from which follows that
+different versions result in different packages. To avoid naming conflicts,
+package names have to be unique within workspaces, as we would otherwise not
+know which binary to use.
+
+Internally the manifest data is cached in SQLite, and refreshed automatically
+when appropriate.
+
+Operating on packages from a user's perspective always means manipulating the
+packages included in the current workspace. The default workspace is called
+`global`. Within a `workspace shell`, the currently active workspace is
+modified.
+
+As a complete example, let's look at installing a package:
+
+1. The user requests a package, with at least a name, and maybe a partially or
+   fully pinned version.
+1. We ensure that all registries are current by maybe re-fetching some of them.
+1. We compare the user's request against the packages we know how to build and
+   find a suitable version.
+1. We check if that package, now with a fully qualified version, is already
+   installed. If so, we just link it into the current workspace, and are done.
+1. Otherwise we fetch the package source, perform the build instructions, and
+   install the package into the package directory. Then we can link it from
+   there into the current workspace.
+
+This system is somewhat similar to what Nix does, in that installing a package
+is decoupled from the ability to use it. Reusing an already existing package in
+a different workspace is effectively free, as we just create a symlink and a
+database record.
+
 ## Building
 
 ```sh
@@ -89,10 +131,6 @@ cargo build --release
 Note that tests require [cargo nextest](https://nexte.st/).
 
 ## Packaging
-
-A `registry` is either a file or URL that serves a `manifest`.
-
-A `manifest` is just a collection of packages.
 
 A minimal example manifest looks like this:
 
@@ -108,6 +146,7 @@ build = """
 unzip $MATCHA_SOURCE
 cd my-package
 cargo build --release
+mkdir $MATCHA_OUTPUT/bin
 cp target/release/my-package $MATCHA_OUTPUT/bin/my-package
 """
 ```
@@ -130,6 +169,7 @@ build = """
 unzip $MATCHA_SOURCE
 cd test-package
 cargo build --release
+mkdir $MATCHA_OUTPUT/bin
 cp target/release/test-package $MATCHA_OUTPUT/bin/test-package
 """
 
@@ -145,6 +185,7 @@ build = """
 unzip $MATCHA_SOURCE
 cd test-package
 cargo build --release
+mkdir $MATCHA_OUTPUT/bin
 cp target/release/test-package $MATCHA_OUTPUT/bin/test-package
 """
 ```
@@ -173,6 +214,3 @@ directory, which then goes into `$PATH` for workspace shells.
   `$MATCHA_OUTPUT/bin` in a directory that gets added to `$PATH`, but we will
   want to produce other artifacts such as man pages, config files, etc.
 - License-aware SBOMs, and dependency trees.
-- Reuse already built packages in different workspaces. Right now we build them
-  individually for each workspace, which is less of a foot-gun, but also a bit
-  wasteful. On the bright side, this also doesn't need a Nix-like GC mechanism.
