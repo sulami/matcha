@@ -293,8 +293,12 @@ impl State {
 
     /// Adds known packages to the database.
     pub async fn add_known_packages(&self, pkgs: &[Package]) -> Result<()> {
-        dbg!(pkgs);
         // TODO: We might actually be overwriting another registry's packages. Don't do that.
+        if pkgs.iter().any(|p| !p.is_tied_to_registry()) {
+            return Err(anyhow!(
+                "known packages must be tied to a registry; this is a bug"
+            ));
+        }
         for pkg in pkgs {
             sqlx::query(
                 "INSERT INTO known_packages
@@ -555,19 +559,19 @@ mod tests {
             Package {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
                 name: "bar".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
                 name: "baz".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
         ];
@@ -621,7 +625,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
@@ -629,7 +633,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/bar".to_string()),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
@@ -637,7 +641,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/baz".to_string()),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
         ];
@@ -651,7 +655,10 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].registry, "https://example.invalid/registry");
+        assert_eq!(
+            results[0].registry.as_ref().unwrap(),
+            "https://example.invalid/registry"
+        );
     }
 
     #[tokio::test]
@@ -664,7 +671,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
@@ -672,7 +679,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/bar".to_string()),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
@@ -680,7 +687,7 @@ mod tests {
                 version: "1.0.1".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
         ];
@@ -697,7 +704,10 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].registry, "https://example.invalid/registry");
+        assert_eq!(
+            results[0].registry.as_ref().unwrap(),
+            "https://example.invalid/registry"
+        );
     }
 
     #[tokio::test]
@@ -709,7 +719,7 @@ mod tests {
             version: "0.1.0".to_string(),
             description: Some("A test package".to_string()),
             homepage: Some("https://example.invalid/foo".to_string()),
-            registry: "https://example.invalid/registry".to_string(),
+            registry: Some("https://example.invalid/registry".to_string()),
             ..Default::default()
         }];
         state.add_known_packages(&pkgs).await.unwrap();
@@ -722,7 +732,10 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].registry, "https://example.invalid/registry");
+        assert_eq!(
+            results[0].registry.as_ref().unwrap(),
+            "https://example.invalid/registry"
+        );
     }
 
     #[tokio::test]
@@ -733,19 +746,19 @@ mod tests {
             Package {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
                 name: "foo".to_string(),
                 version: "0.1.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
                 name: "foo".to_string(),
                 version: "0.2.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
         ];
@@ -793,19 +806,19 @@ mod tests {
             Package {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
                 name: "bar".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
             Package {
                 name: "baz".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             },
         ];
@@ -847,6 +860,18 @@ mod tests {
         let pkg = state.get_installed_package(&spec).await?.unwrap();
         assert_eq!(pkg.name, spec.name);
         assert_eq!(pkg.version, spec.version);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_known_packages_refuses_untied_packages() -> Result<()> {
+        let state = setup_state_with_registry().await?;
+        let pkgs = vec![Package {
+            name: "test-package".to_string(),
+            version: "0.1.0".to_string(),
+            ..Default::default()
+        }];
+        assert!(state.add_known_packages(&pkgs).await.is_err());
         Ok(())
     }
 }

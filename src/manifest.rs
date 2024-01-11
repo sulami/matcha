@@ -35,7 +35,7 @@ pub struct Manifest {
     pub name: String,
     /// The URI of the registry this manifest is from.
     #[serde(skip)]
-    pub uri: String,
+    pub uri: Option<String>,
     /// The description of the manifest.
     pub description: Option<String>,
     /// Packages in this manifest.
@@ -45,10 +45,18 @@ pub struct Manifest {
 impl Manifest {
     /// Sets the URI of the registry this manifest is from.
     pub fn set_registry_uri(&mut self, uri: &str) {
-        self.uri = uri.to_string();
+        self.uri = Some(uri.to_string());
         for package in &mut self.packages {
-            package.registry = uri.to_string();
+            package.registry = Some(uri.to_string());
         }
+    }
+
+    /// Returns whether this manifest is tied to a registry.
+    ///
+    /// If this is false, we have encountered a bug, because all manifests should come from a
+    /// registry.
+    pub fn is_tied_to_registry(&self) -> bool {
+        self.uri.is_some() && self.packages.iter().all(|p| p.is_tied_to_registry())
     }
 }
 
@@ -130,7 +138,17 @@ pub struct Package {
     pub build: Option<String>,
     /// The registry this package is from.
     #[serde(skip)]
-    pub registry: String,
+    pub registry: Option<String>,
+}
+
+impl Package {
+    /// Returns whether this package is tied to a registry.
+    ///
+    /// If this is false, we have encountered a bug, because all packages should come from a
+    /// registry.
+    pub fn is_tied_to_registry(&self) -> bool {
+        self.registry.is_some()
+    }
 }
 
 /// The build log of a package.
@@ -295,7 +313,13 @@ impl Display for Package {
         if let Some(license) = &self.license {
             write!(f, " [{}]", license)?;
         }
-        write!(f, " < {}", self.registry)
+        write!(
+            f,
+            " < {}",
+            self.registry
+                .as_ref()
+                .expect("package not tied to registry")
+        )
     }
 }
 
@@ -327,7 +351,6 @@ mod tests {
 
         assert_eq!(manifest.schema_version, 1);
         assert_eq!(manifest.name, "test");
-        assert_eq!(manifest.uri, "https://example.invalid/test");
         assert_eq!(manifest.description, Some("A test manifest".to_string()));
         assert_eq!(manifest.packages.len(), 1);
         assert_eq!(manifest.packages[0].name, "test-package");
@@ -341,10 +364,6 @@ mod tests {
             Some("https://example.invalid/test-package".to_string())
         );
         assert_eq!(manifest.packages[0].license, Some("MIT".to_string()));
-        assert_eq!(
-            manifest.packages[0].registry,
-            "https://example.invalid/test"
-        );
         assert_eq!(
             manifest.packages[0].source,
             Some("https://example.invalid/test-package/archive/0.1.0.tar.gz".to_string())
@@ -361,7 +380,7 @@ mod tests {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
-            registry: "test".to_string(),
+            registry: Some("https://example.invalid/registry".to_string()),
             source: Some("https://example.invalid/test-package/archive/0.1.0.tar.gz".to_string()),
             ..Default::default()
         };
@@ -380,7 +399,7 @@ mod tests {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
-            registry: "test".to_string(),
+            registry: Some("https://example.invalid/registry".to_string()),
             source: Some("https://example.invalid/test-source".to_string()),
             build: Some(
                 "mkdir $MATCHA_OUTPUT/bin && cp $MATCHA_SOURCE $MATCHA_OUTPUT/bin/".to_string(),
@@ -409,7 +428,7 @@ mod tests {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
-            registry: "test".to_string(),
+            registry: Some("https://example.invalid/registry".to_string()),
             build: Some("echo hullo > $MATCHA_OUTPUT/output".to_string()),
             ..Default::default()
         };
@@ -433,7 +452,7 @@ mod tests {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
-            registry: "test".to_string(),
+            registry: Some("https://example.invalid/registry".to_string()),
             build: Some("false\ntrue".to_string()),
             ..Default::default()
         };
@@ -460,7 +479,7 @@ mod tests {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
-            registry: "test".to_string(),
+            registry: Some("https://example.invalid/registry".to_string()),
             source: Some("https://example.invalid/test-source".to_string()),
             build: Some(
                 "mkdir $MATCHA_OUTPUT/bin && cp $MATCHA_SOURCE $MATCHA_OUTPUT/bin/".to_string(),
@@ -505,7 +524,7 @@ mod tests {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
-            registry: "test".to_string(),
+            registry: Some("https://example.invalid/registry".to_string()),
             source: Some("https://example.invalid/test-source".to_string()),
             build: Some(
                 "mkdir $MATCHA_OUTPUT/bin && cp $MATCHA_SOURCE $MATCHA_OUTPUT/bin/".to_string(),

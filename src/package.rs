@@ -345,7 +345,6 @@ mod tests {
         let pkg: PackageRequest = crate::manifest::Package {
             name: "foo".to_string(),
             version: "1.2.3".to_string(),
-            registry: "test".to_string(),
             ..Default::default()
         }
         .into();
@@ -413,7 +412,7 @@ mod tests {
             .add_known_packages(&[ManifestPackage {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "https://example.invalid/registry".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
                 ..Default::default()
             }])
             .await
