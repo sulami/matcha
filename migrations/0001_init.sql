@@ -18,11 +18,11 @@ CREATE TABLE IF NOT EXISTS installed_packages (
 CREATE INDEX IF NOT EXISTS installed_packages_workspace ON installed_packages (workspace);
 
 CREATE TABLE IF NOT EXISTS registries (
-    name TEXT NOT NULL,
     uri TEXT NOT NULL,
+    name TEXT,
     last_fetched DATETIME,
 
-    PRIMARY KEY (name)
+    PRIMARY KEY (uri)
 );
 
 CREATE TABLE IF NOT EXISTS known_packages (
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS known_packages (
     registry TEXT NOT NULL,
 
     PRIMARY KEY (name, version),
-    FOREIGN KEY (registry) REFERENCES registries (name) ON DELETE CASCADE
+    FOREIGN KEY (registry) REFERENCES registries (uri) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS known_packages_registry ON known_packages (registry);
 

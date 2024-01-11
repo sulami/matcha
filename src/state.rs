@@ -181,10 +181,7 @@ impl State {
         if !reg.is_initialized() {
             return Err(anyhow!("registry {} is not initialized", &reg.uri));
         }
-        if self
-            .registry_exists_by_name(reg.name.as_ref().unwrap())
-            .await?
-        {
+        if self.registry_exists(&reg.uri.to_string()).await? {
             return Err(anyhow!(
                 "registry {} already exists",
                 reg.name.as_ref().unwrap()
@@ -200,12 +197,12 @@ impl State {
     }
 
     /// Removes a registry from the internal state.
-    pub async fn remove_registry(&self, name: &str) -> Result<()> {
-        if !self.registry_exists_by_name(name).await? {
-            return Err(anyhow!("registry {} does not exist", name));
+    pub async fn remove_registry(&self, uri: &str) -> Result<()> {
+        if !self.registry_exists(uri).await? {
+            return Err(anyhow!("registry {} does not exist", uri));
         }
-        sqlx::query("DELETE FROM registries WHERE name = $1")
-            .bind(name)
+        sqlx::query("DELETE FROM registries WHERE uri = $1")
+            .bind(uri)
             .execute(&self.db)
             .await
             .context("failed to remove registry from database")?;
@@ -222,18 +219,8 @@ impl State {
         Ok(registries)
     }
 
-    /// Returns true if a registry with this name exists.
-    pub async fn registry_exists_by_name(&self, name: &str) -> Result<bool> {
-        let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE name = $1)")
-            .bind(name)
-            .fetch_one(&self.db)
-            .await
-            .context("failed to check if registry exists in database")?;
-        Ok(exists)
-    }
-
     /// Returns true if a registry with this URI exists.
-    pub async fn registry_exists_by_uri(&self, uri: &str) -> Result<bool> {
+    pub async fn registry_exists(&self, uri: &str) -> Result<bool> {
         let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE uri = $1)")
             .bind(uri)
             .fetch_one(&self.db)
@@ -244,7 +231,7 @@ impl State {
 
     /// Updates the database record of a registry with a new name and last_fetched.
     pub async fn update_registry(&self, reg: &Registry) -> Result<()> {
-        if !self.registry_exists_by_uri(&reg.uri.to_string()).await? {
+        if !self.registry_exists(&reg.uri.to_string()).await? {
             return Err(anyhow!("registry {} does not exist", &reg.uri));
         }
         sqlx::query("UPDATE registries SET name = $1, last_fetched = $2 WHERE uri = $3")
@@ -262,7 +249,7 @@ impl State {
         let pkgs = sqlx::query_as::<_, Package>(
             "SELECT * FROM known_packages WHERE registry = $1 ORDER BY name ASC, version DESC",
         )
-        .bind(&reg.name)
+        .bind(&reg.uri.to_string())
         .fetch_all(&self.db)
         .await
         .context("failed to fetch known packages from database")?;
@@ -497,7 +484,10 @@ mod tests {
             registries[0].uri.to_string(),
             "https://example.invalid/registry"
         );
-        state.remove_registry("test").await.unwrap();
+        state
+            .remove_registry("https://example.invalid/registry")
+            .await
+            .unwrap();
         let registries = state.registries().await.unwrap();
         assert!(registries.is_empty());
     }
@@ -515,7 +505,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_registry_refuses_nonexistent_name() {
         let state = State::load(":memory:").await.unwrap();
-        assert!(state.remove_registry("test").await.is_err());
+        assert!(state.remove_registry("nonexistent").await.is_err());
     }
 
     #[tokio::test]
@@ -526,24 +516,27 @@ mod tests {
             Package {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
                 name: "bar".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
                 name: "baz".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
         ];
         state.add_known_packages(&pkgs).await.unwrap();
-        state.remove_registry("test").await.unwrap();
+        state
+            .remove_registry("https://example.invalid/registry")
+            .await
+            .unwrap();
         let results = state.search_known_packages("foo").await.unwrap();
         assert!(results.is_empty());
     }
@@ -551,7 +544,10 @@ mod tests {
     #[tokio::test]
     async fn test_registry_exists() {
         let state = setup_state_with_registry().await.unwrap();
-        assert!(state.registry_exists_by_name("test").await.unwrap());
+        assert!(state
+            .registry_exists("https://example.invalid/registry")
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -586,7 +582,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
@@ -594,7 +590,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/bar".to_string()),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
@@ -602,7 +598,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/baz".to_string()),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
         ];
@@ -616,7 +612,7 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].registry, "test");
+        assert_eq!(results[0].registry, "https://example.invalid/registry");
     }
 
     #[tokio::test]
@@ -629,7 +625,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
@@ -637,7 +633,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/bar".to_string()),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
@@ -645,7 +641,7 @@ mod tests {
                 version: "1.0.1".to_string(),
                 description: Some("A test package".to_string()),
                 homepage: Some("https://example.invalid/foo".to_string()),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
         ];
@@ -662,7 +658,7 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].registry, "test");
+        assert_eq!(results[0].registry, "https://example.invalid/registry");
     }
 
     #[tokio::test]
@@ -674,7 +670,7 @@ mod tests {
             version: "0.1.0".to_string(),
             description: Some("A test package".to_string()),
             homepage: Some("https://example.invalid/foo".to_string()),
-            registry: "test".to_string(),
+            registry: "https://example.invalid/registry".to_string(),
             ..Default::default()
         }];
         state.add_known_packages(&pkgs).await.unwrap();
@@ -687,7 +683,7 @@ mod tests {
             results[0].homepage,
             Some("https://example.invalid/foo".to_string())
         );
-        assert_eq!(results[0].registry, "test");
+        assert_eq!(results[0].registry, "https://example.invalid/registry");
     }
 
     #[tokio::test]
@@ -698,19 +694,19 @@ mod tests {
             Package {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
                 name: "foo".to_string(),
                 version: "0.1.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
                 name: "foo".to_string(),
                 version: "0.2.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
         ];
@@ -758,25 +754,29 @@ mod tests {
             Package {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
                 name: "bar".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
             Package {
                 name: "baz".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             },
         ];
         state.add_known_packages(&pkgs).await.unwrap();
         let results = state
-            .known_packages_for_registry(&Registry::default())
+            .known_packages_for_registry(&Registry {
+                name: None,
+                uri: "https://example.invalid/registry".into(),
+                last_fetched: None,
+            })
             .await
             .unwrap();
         assert_eq!(results.len(), 3);

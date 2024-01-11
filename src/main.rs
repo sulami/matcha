@@ -161,8 +161,8 @@ async fn main() -> Result<()> {
             RegistryCommand::Add { uri } => {
                 add_registry(&state, &uri, &DefaultFetcher).await?;
             }
-            RegistryCommand::Remove { name } => {
-                remove_registry(&state, &name).await?;
+            RegistryCommand::Remove { uri } => {
+                remove_registry(&state, &uri).await?;
             }
             RegistryCommand::List => {
                 list_registries(&state).await?;
@@ -305,7 +305,7 @@ enum RegistryCommand {
     #[command(arg_required_else_help = true, alias = "rm")]
     Remove {
         /// Registry to remove
-        name: String,
+        uri: String,
     },
 
     /// List all registries (alias: ls)
@@ -700,8 +700,13 @@ mod tests {
         add_registry(&state, "https://example.invalid", &MockFetcher::default())
             .await
             .unwrap();
-        remove_registry(&state, "test").await.unwrap();
-        assert!(!state.registry_exists_by_name("test").await.unwrap());
+        remove_registry(&state, "https://example.invalid")
+            .await
+            .unwrap();
+        assert!(!state
+            .registry_exists("https://example.invalid")
+            .await
+            .unwrap());
     }
 
     #[tokio::test]

@@ -127,12 +127,11 @@ impl Registry {
 
 impl Display for Registry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} ({})",
-            self.name.as_deref().unwrap_or("<unknown>"),
-            self.uri
-        )
+        write!(f, "{}", self.uri)?;
+        if let Some(name) = &self.name {
+            write!(f, " ({})", name)?;
+        }
+        Ok(())
     }
 }
 
@@ -255,7 +254,7 @@ impl Default for MockFetcher {
             manifest: r#"
                 schema_version = 1
                 name = "test"
-                uri = "https://example.invalid/test"
+                uri = "https://example.invalid/registry"
                 description = "A test manifest"
 
                 [[packages]]
@@ -305,7 +304,7 @@ mod tests {
     #[tokio::test]
     async fn test_is_initialized() {
         let state = State::load(":memory:").await.unwrap();
-        let mut registry = Registry::new("https://example.invalid");
+        let mut registry = Registry::new("https://example.invalid/registry");
         assert!(!registry.is_initialized());
         registry
             .initialize(&state, &MockFetcher::default())
@@ -316,7 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_should_update() {
-        let mut registry = Registry::new("https://example.invalid");
+        let mut registry = Registry::new("https://example.invalid/registry");
         assert!(registry.should_update());
         registry.last_fetched = Some(OffsetDateTime::now_utc());
         assert!(!registry.should_update());
@@ -333,7 +332,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_registry() {
         let state = State::load(":memory:").await.unwrap();
-        let mut registry = Registry::new("https://example.invalid");
+        let mut registry = Registry::new("https://example.invalid/registry");
         registry
             .initialize(&state, &MockFetcher::default())
             .await
@@ -349,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_registry_refuses_unsafe_package_names() {
         let state = State::load(":memory:").await.unwrap();
-        let mut registry = Registry::new("https://example.invalid");
+        let mut registry = Registry::new("https://example.invalid/registry");
         registry
             .initialize(&state, &MockFetcher::default())
             .await

@@ -69,7 +69,7 @@ impl<'de> Deserialize<'de> for Manifest {
                 description: temp_package.description,
                 homepage: temp_package.homepage,
                 license: temp_package.license,
-                registry: temp_manifest.name.clone(),
+                registry: temp_manifest.uri.to_string(),
                 source: temp_package.source,
                 build: temp_package.build,
             })
@@ -307,7 +307,10 @@ mod tests {
             Some("https://example.invalid/test-package".to_string())
         );
         assert_eq!(manifest.packages[0].license, Some("MIT".to_string()));
-        assert_eq!(manifest.packages[0].registry, "test");
+        assert_eq!(
+            manifest.packages[0].registry,
+            "https://example.invalid/test"
+        );
         assert_eq!(
             manifest.packages[0].source,
             Some("https://example.invalid/test-package/archive/0.1.0.tar.gz".to_string())

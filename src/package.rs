@@ -393,7 +393,7 @@ mod tests {
             .add_known_packages(&[ManifestPackage {
                 name: "foo".to_string(),
                 version: "1.0.0".to_string(),
-                registry: "test".to_string(),
+                registry: "https://example.invalid/registry".to_string(),
                 ..Default::default()
             }])
             .await
