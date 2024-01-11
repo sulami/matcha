@@ -94,12 +94,18 @@ impl Registry {
         }
 
         // Add new packages.
-        state.add_known_packages(&manifest.packages).await?;
+        state
+            .add_known_packages(&manifest.packages)
+            .await
+            .context("failed to add new known packages")?;
 
         // Update name if changed.
         self.name = Some(manifest.name.clone());
         self.last_fetched = Some(OffsetDateTime::now_utc());
-        state.update_registry(self).await?;
+        state
+            .update_registry(self)
+            .await
+            .context("failed to update registry in database")?;
 
         Ok(())
     }
@@ -107,7 +113,8 @@ impl Registry {
     /// Fetches the manifest from the registry.
     async fn download(&self, fetcher: &impl Fetcher) -> Result<Manifest> {
         let s = fetcher.fetch(self).await?;
-        let manifest: Manifest = s.parse().context("failed to parse manifest")?;
+        let mut manifest: Manifest = s.parse().context("failed to parse manifest")?;
+        manifest.set_registry_uri(&self.uri.to_string());
         Ok(manifest)
     }
 

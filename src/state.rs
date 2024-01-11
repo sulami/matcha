@@ -87,17 +87,20 @@ impl State {
     }
 
     /// Begins a transaction.
+    #[allow(dead_code)]
     pub async fn begin_transaction(&self) -> Result<sqlx::Transaction<'_, Sqlite>> {
         Ok(self.db.begin().await?)
     }
 
     /// Commits a transaction.
+    #[allow(dead_code)]
     pub async fn commit_transaction(&self, tx: sqlx::Transaction<'_, Sqlite>) -> Result<()> {
         tx.commit().await?;
         Ok(())
     }
 
     /// Rolls back a transaction.
+    #[allow(dead_code)]
     pub async fn rollback_transaction(&self, tx: sqlx::Transaction<'_, Sqlite>) -> Result<()> {
         tx.rollback().await?;
         Ok(())
@@ -190,19 +193,6 @@ impl State {
         .await
         .context("failed to remove workspace package from database")?;
         Ok(())
-    }
-
-    /// Returns whether a package is installed.
-    pub async fn is_package_installed(&self, pkg: &KnownPackageSpec) -> Result<bool> {
-        let exists = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM installed_packages WHERE name = $1 AND version = $2)",
-        )
-        .bind(&pkg.name)
-        .bind(&pkg.version)
-        .fetch_one(&self.db)
-        .await
-        .context("failed to remove installed package from database")?;
-        Ok(exists)
     }
 
     /// Returns a workspace package matching the name, if any.
@@ -303,6 +293,8 @@ impl State {
 
     /// Adds known packages to the database.
     pub async fn add_known_packages(&self, pkgs: &[Package]) -> Result<()> {
+        dbg!(pkgs);
+        // TODO: We might actually be overwriting another registry's packages. Don't do that.
         for pkg in pkgs {
             sqlx::query(
                 "INSERT INTO known_packages

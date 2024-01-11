@@ -33,12 +33,23 @@ pub struct Manifest {
     pub schema_version: u32,
     /// The name of the manifest.
     pub name: String,
-    /// The URI of the manifest.
+    /// The URI of the registry this manifest is from.
+    #[serde(skip)]
     pub uri: String,
     /// The description of the manifest.
     pub description: Option<String>,
     /// Packages in this manifest.
     pub packages: Vec<Package>,
+}
+
+impl Manifest {
+    /// Sets the URI of the registry this manifest is from.
+    pub fn set_registry_uri(&mut self, uri: &str) {
+        self.uri = uri.to_string();
+        for package in &mut self.packages {
+            package.registry = uri.to_string();
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for Manifest {
@@ -61,7 +72,6 @@ impl<'de> Deserialize<'de> for Manifest {
         struct TempManifest {
             schema_version: u32,
             name: String,
-            uri: String,
             description: Option<String>,
             packages: Vec<TempPackage>,
         }
@@ -77,18 +87,18 @@ impl<'de> Deserialize<'de> for Manifest {
                 description: temp_package.description,
                 homepage: temp_package.homepage,
                 license: temp_package.license,
-                registry: temp_manifest.uri.to_string(),
                 source: temp_package.source,
                 build: temp_package.build,
+                ..Default::default()
             })
             .collect();
 
         Ok(Manifest {
             schema_version: temp_manifest.schema_version,
             name: temp_manifest.name,
-            uri: temp_manifest.uri,
             description: temp_manifest.description,
             packages,
+            ..Default::default()
         })
     }
 }
@@ -300,7 +310,6 @@ mod tests {
         let manifest = r#"
             schema_version = 1
             name = "test"
-            uri = "https://example.invalid/test"
             description = "A test manifest"
 
             [[packages]]

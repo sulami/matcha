@@ -118,7 +118,6 @@ A full example would be:
 schema_version = 1
 name = "my-registry"
 description = "An example manifest"
-uri = "https://example.invalid/registry"
 
 [[packages]]
 name = "test-package"
