@@ -9,13 +9,9 @@ INSERT INTO meta (key, value) VALUES ('schema_version', '1');
 CREATE TABLE IF NOT EXISTS installed_packages (
     name TEXT NOT NULL,
     version TEXT NOT NULL,
-    requested_version TEXT NOT NULL,
-    workspace TEXT NOT NULL DEFAULT 'global',
 
-    PRIMARY KEY (name, version, workspace)
-    FOREIGN KEY (workspace) REFERENCES workspaces (name) ON DELETE CASCADE
+    PRIMARY KEY (name, version)
 );
-CREATE INDEX IF NOT EXISTS installed_packages_workspace ON installed_packages (workspace);
 
 CREATE TABLE IF NOT EXISTS registries (
     uri TEXT NOT NULL,
@@ -46,3 +42,14 @@ CREATE TABLE IF NOT EXISTS workspaces (
     PRIMARY KEY (name)
 );
 INSERT INTO workspaces (name) VALUES ('global');
+
+CREATE TABLE IF NOT EXISTS workspace_packages (
+    name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    requested_version TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+
+    PRIMARY KEY (name, version, workspace),
+    FOREIGN KEY (workspace) REFERENCES workspaces (name) ON DELETE CASCADE
+    FOREIGN KEY (name, version) REFERENCES installed_packages (name, version) ON DELETE CASCADE
+);

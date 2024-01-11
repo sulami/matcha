@@ -18,5 +18,6 @@ mod tests {
         assert!(!is_file_system_safe("foo/bar"));
         assert!(!is_file_system_safe("foo bar"));
         assert!(!is_file_system_safe(r"foo\bar"));
+        assert!(!is_file_system_safe(r#"foo"bar"#));
     }
 }

@@ -18,41 +18,28 @@ pub struct PackageRequest {
 impl PackageRequest {
     /// If the version isn't fully qualified, resolves it to the latest installed one.
     ///
-    /// Returns an error if the package is either not installed,
-    /// or if multiple versions of the package are installed.
-    pub async fn resolve_installed_version(
+    /// Returns an error if the package is not installed in this workspace.
+    pub async fn resolve_workspace_version(
         &self,
         state: &State,
         workspace: &Workspace,
-    ) -> Result<InstalledPackageSpec> {
-        let installed_versions = state
-            .installed_package_versions(&self.name, workspace)
-            .await?;
-
-        if installed_versions.is_empty() {
+    ) -> Result<WorkspacePackageSpec> {
+        let Some(installed) = state.get_workspace_package(&self.name, workspace).await? else {
             return Err(anyhow!("package {} is not installed", self));
-        }
-
-        if installed_versions.len() > 1 {
-            return Err(anyhow!(
-                "package {} is installed in multiple versions: {}",
-                self,
-                installed_versions.join(", ")
-            ));
-        }
+        };
 
         let Some(resolved) = find_matching_version(
-            &installed_versions,
+            &[installed.version.clone()],
             self.version.as_deref().unwrap_or_default(),
         ) else {
             return Err(anyhow!(
-                "package {} is not installed, but these versions are: {}",
+                "package {} is not installed, but this versions is: {}",
                 self,
-                installed_versions.join(", ")
+                installed.version
             ));
         };
 
-        Ok(InstalledPackageSpec::from_request(self, resolved))
+        Ok(WorkspacePackageSpec::from_request(self, resolved))
     }
 
     /// If the version isn't fully qualified, resolves it to the latest known one.
@@ -165,8 +152,8 @@ impl Display for KnownPackageSpec {
 
 // Test-only crutch.
 #[cfg(test)]
-impl From<InstalledPackageSpec> for KnownPackageSpec {
-    fn from(spec: InstalledPackageSpec) -> Self {
+impl From<WorkspacePackageSpec> for KnownPackageSpec {
+    fn from(spec: WorkspacePackageSpec) -> Self {
         Self {
             name: spec.name,
             version: spec.version,
@@ -175,9 +162,9 @@ impl From<InstalledPackageSpec> for KnownPackageSpec {
     }
 }
 
-/// A [`PackageRequest`] with a resolved version based on installed packages.
+/// A [`PackageRequest`] with a resolved version based packages in a workspace.
 #[derive(Clone, Debug, FromRow)]
-pub struct InstalledPackageSpec {
+pub struct WorkspacePackageSpec {
     /// The name of the package.
     pub name: String,
     /// The resolved version of the package.
@@ -186,7 +173,7 @@ pub struct InstalledPackageSpec {
     pub requested_version: String,
 }
 
-impl InstalledPackageSpec {
+impl WorkspacePackageSpec {
     /// Creates a new spec from a [`PackageRequest`] and a resolved version.
     pub fn from_request(request: &PackageRequest, version: String) -> Self {
         Self {
@@ -238,7 +225,7 @@ impl InstalledPackageSpec {
     }
 }
 
-impl Display for InstalledPackageSpec {
+impl Display for WorkspacePackageSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -256,7 +243,7 @@ impl Display for InstalledPackageSpec {
 
 // Test-only crutch.
 #[cfg(test)]
-impl From<KnownPackageSpec> for InstalledPackageSpec {
+impl From<KnownPackageSpec> for WorkspacePackageSpec {
     fn from(spec: KnownPackageSpec) -> Self {
         Self {
             name: spec.name,
@@ -326,22 +313,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_version() {
-        let state = State::load(":memory:").await.unwrap();
+    async fn test_resolve_version() -> Result<()> {
+        let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
-        state
-            .add_installed_package(&known_package("foo", "1.0.0"), &workspace)
-            .await
-            .unwrap();
+        let spec = known_package("foo", "1.0.0");
+        state.add_installed_package(&spec).await?;
+        state.add_workspace_package(&spec, &workspace).await?;
         let pkg = PackageRequest {
             name: "foo".to_string(),
             version: None,
         };
-        let spec = pkg
-            .resolve_installed_version(&state, &workspace)
-            .await
-            .unwrap();
+        let spec = pkg.resolve_workspace_version(&state, &workspace).await?;
         assert_eq!(spec.version, "1.0.0");
+        Ok(())
     }
 
     #[tokio::test]
@@ -353,49 +337,27 @@ mod tests {
             version: None,
         };
         assert!(pkg
-            .resolve_installed_version(&state, &workspace)
+            .resolve_workspace_version(&state, &workspace)
             .await
             .is_err());
     }
 
     #[tokio::test]
-    async fn test_resolve_version_fails_if_this_version_is_not_installed() {
-        let state = State::load(":memory:").await.unwrap();
+    async fn test_resolve_version_fails_if_this_version_is_not_installed() -> Result<()> {
+        let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
-        state
-            .add_installed_package(&known_package("foo", "1.0.0"), &workspace)
-            .await
-            .unwrap();
+        let spec = known_package("foo", "1.0.0");
+        state.add_installed_package(&spec).await?;
+        state.add_workspace_package(&spec, &workspace).await?;
         let pkg = PackageRequest {
             name: "foo".to_string(),
             version: Some("2".to_string()),
         };
         assert!(pkg
-            .resolve_installed_version(&state, &workspace)
+            .resolve_workspace_version(&state, &workspace)
             .await
             .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_resolve_installed_package_version_fails_if_multiple_matches_installed() {
-        let state = State::load(":memory:").await.unwrap();
-        let (_root, workspace) = test_workspace("global").await;
-        state
-            .add_installed_package(&known_package("foo", "1.0.0"), &workspace)
-            .await
-            .unwrap();
-        state
-            .add_installed_package(&known_package("foo", "2.0.0"), &workspace)
-            .await
-            .unwrap();
-        let pkg = PackageRequest {
-            name: "foo".to_string(),
-            version: None,
-        };
-        assert!(pkg
-            .resolve_installed_version(&state, &workspace)
-            .await
-            .is_err());
+        Ok(())
     }
 
     #[tokio::test]
@@ -434,19 +396,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_known_version_fails_if_this_version_is_not_known() {
-        let state = State::load(":memory:").await.unwrap();
+    async fn test_resolve_known_version_fails_if_this_version_is_not_known() -> Result<()> {
+        let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
+        let spec = known_package("foo", "1.0.0");
 
-        state
-            .add_installed_package(&known_package("foo", "1.0.0"), &workspace)
-            .await
-            .unwrap();
+        state.add_installed_package(&spec).await?;
+        state.add_workspace_package(&spec, &workspace).await?;
         let pkg = PackageRequest {
             name: "foo".to_string(),
             version: Some("2.0.0".to_string()),
         };
         assert!(pkg.resolve_known_version(&state).await.is_err());
+        Ok(())
     }
 
     #[test]

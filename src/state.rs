@@ -3,13 +3,13 @@ use std::{path::Path, str::FromStr};
 use anyhow::{anyhow, Context, Result};
 use sqlx::{
     migrate,
-    sqlite::{SqliteConnectOptions, SqlitePool},
+    sqlite::{Sqlite, SqliteConnectOptions, SqlitePool},
 };
 use tokio::fs::create_dir_all;
 
 use crate::{
     manifest::Package,
-    package::{InstalledPackageSpec, KnownPackageSpec},
+    package::{KnownPackageSpec, WorkspacePackageSpec},
     registry::Registry,
     workspace::Workspace,
 };
@@ -86,29 +86,57 @@ impl State {
         Ok(db)
     }
 
+    /// Begins a transaction.
+    pub async fn begin_transaction(&self) -> Result<sqlx::Transaction<'_, Sqlite>> {
+        Ok(self.db.begin().await?)
+    }
+
+    /// Commits a transaction.
+    pub async fn commit_transaction(&self, tx: sqlx::Transaction<'_, Sqlite>) -> Result<()> {
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Rolls back a transaction.
+    pub async fn rollback_transaction(&self, tx: sqlx::Transaction<'_, Sqlite>) -> Result<()> {
+        tx.rollback().await?;
+        Ok(())
+    }
+
     /// Returns all installed packages.
-    pub async fn installed_packages(
+    pub async fn workspace_packages(
         &self,
         workspace: &Workspace,
-    ) -> Result<Vec<InstalledPackageSpec>> {
-        let packages = sqlx::query_as::<_, InstalledPackageSpec>(
-            "SELECT * FROM installed_packages WHERE workspace = $1",
+    ) -> Result<Vec<WorkspacePackageSpec>> {
+        let packages = sqlx::query_as::<_, WorkspacePackageSpec>(
+            "SELECT * FROM workspace_packages WHERE workspace = $1",
         )
         .bind(&workspace.name)
         .fetch_all(&self.db)
         .await
-        .context("failed to fetch installed packages from database")?;
+        .context("failed to fetch workspace packages from database")?;
         Ok(packages)
     }
 
-    /// Adds a package to the internal state.
-    pub async fn add_installed_package(
+    /// Adds an installed package to the internal state.
+    pub async fn add_installed_package(&self, pkg: &KnownPackageSpec) -> Result<()> {
+        sqlx::query("INSERT INTO installed_packages (name, version) VALUES ($1, $2)")
+            .bind(&pkg.name)
+            .bind(&pkg.version)
+            .execute(&self.db)
+            .await
+            .context("failed to insert installed package into database")?;
+        Ok(())
+    }
+
+    /// Adds a workspace package to the internal state.
+    pub async fn add_workspace_package(
         &self,
         pkg: &KnownPackageSpec,
         workspace: &Workspace,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO installed_packages (name, version, requested_version, workspace) VALUES ($1, $2, $3, $4)",
+            "INSERT INTO workspace_packages (name, version, requested_version, workspace) VALUES ($1, $2, $3, $4)",
         )
         .bind(&pkg.name)
         .bind(&pkg.version)
@@ -116,64 +144,66 @@ impl State {
         .bind(&workspace.name)
         .execute(&self.db)
         .await
-        .context("failed to insert installed package into database")?;
+        .context("failed to insert workspace package into database")?;
         Ok(())
     }
 
-    /// Removes a package from the internal state.
-    pub async fn remove_installed_package(
+    /// Removes an installed package from the internal state.
+    pub async fn remove_installed_package(&self, pkg: &WorkspacePackageSpec) -> Result<()> {
+        sqlx::query("DELETE FROM installed_packages WHERE name = $1 AND version = $2")
+            .bind(&pkg.name)
+            .bind(&pkg.version)
+            .execute(&self.db)
+            .await
+            .context("failed to remove installed package from database")?;
+        Ok(())
+    }
+
+    /// Removes a workspace package from the internal state.
+    pub async fn remove_workspace_package(
         &self,
-        pkg: &InstalledPackageSpec,
+        pkg: &WorkspacePackageSpec,
         workspace: &Workspace,
     ) -> Result<()> {
         sqlx::query(
-            "DELETE FROM installed_packages
-                    WHERE name = $1
-                    AND version = $2
-                    AND workspace = $3",
+            "DELETE FROM workspace_packages WHERE name = $1 AND version = $2 AND workspace = $3",
         )
         .bind(&pkg.name)
         .bind(&pkg.version)
         .bind(&workspace.name)
         .execute(&self.db)
         .await
-        .context("failed to remove installed package from database")?;
+        .context("failed to remove workspace package from database")?;
         Ok(())
     }
 
-    /// Returns whether a package is installed or not.
-    pub async fn is_package_installed(
-        &self,
-        pkg: &KnownPackageSpec,
-        workspace: &Workspace,
-    ) -> Result<bool> {
-        // TODO: This could be a direct query instead of getting all installed versions.
-        Ok(self
-            .installed_package_versions(&pkg.name, workspace)
-            .await?
-            .iter()
-            .any(|v| v == &pkg.version))
+    /// Returns whether a package is installed.
+    pub async fn is_package_installed(&self, pkg: &KnownPackageSpec) -> Result<bool> {
+        let exists = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM installed_packages WHERE name = $1 AND version = $2)",
+        )
+        .bind(&pkg.name)
+        .bind(&pkg.version)
+        .fetch_one(&self.db)
+        .await
+        .context("failed to remove installed package from database")?;
+        Ok(exists)
     }
 
-    /// Returns all installed versions of a package, ordered newest to oldest.
-    pub async fn installed_package_versions(
+    /// Returns a workspace package matching the name, if any.
+    pub async fn get_workspace_package(
         &self,
         name: &str,
         workspace: &Workspace,
-    ) -> Result<Vec<String>> {
-        let versions = sqlx::query_scalar(
-            "SELECT version
-            FROM installed_packages
-            WHERE name = $1
-            AND workspace = $2
-            ORDER BY version DESC",
-        )
-        .bind(name)
-        .bind(&workspace.name)
-        .fetch_all(&self.db)
-        .await
-        .context("failed to fetch installed package versions from database")?;
-        Ok(versions)
+    ) -> Result<Option<WorkspacePackageSpec>> {
+        let exists =
+            sqlx::query_as("SELECT * FROM workspace_packages WHERE name = $1 AND workspace = $2")
+                .bind(name)
+                .bind(&workspace.name)
+                .fetch_optional(&self.db)
+                .await
+                .context("failed to check for installed workspace package")?;
+        Ok(exists)
     }
 
     /// Adds a registry to the internal state.
@@ -426,52 +456,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_package_add_list_remove() {
-        let state = State::load(":memory:").await.unwrap();
+    async fn test_workspace_package_add_list_remove() -> Result<()> {
+        let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
         let spec = known_package("test-package", "0.1.0");
-        state
-            .add_installed_package(&spec, &workspace)
-            .await
-            .unwrap();
-        let packages = state.installed_packages(&workspace).await.unwrap();
+        state.add_installed_package(&spec).await?;
+        state.add_workspace_package(&spec, &workspace).await?;
+        let packages = state.workspace_packages(&workspace).await?;
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, spec.name);
         assert_eq!(packages[0].version, spec.version);
         state
-            .remove_installed_package(&spec.into(), &workspace)
-            .await
-            .unwrap();
-        let packages = state.installed_packages(&workspace).await.unwrap();
+            .remove_workspace_package(&spec.into(), &workspace)
+            .await?;
+        let packages = state.workspace_packages(&workspace).await?;
         assert!(packages.is_empty());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_add_package_refuses_same_version_twice() {
-        let state = State::load(":memory:").await.unwrap();
+    async fn test_add_workspace_package_refuses_same_version_twice() -> Result<()> {
+        let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
         let spec = known_package("test-package", "0.1.0");
-        state
-            .add_installed_package(&spec, &workspace)
-            .await
-            .unwrap();
+        state.add_installed_package(&spec).await?;
+        state.add_workspace_package(&spec, &workspace).await?;
         assert!(state
-            .add_installed_package(&spec, &workspace)
+            .add_workspace_package(&spec, &workspace)
             .await
             .is_err());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_is_package_installed() {
-        let state = setup_state_with_registry().await.unwrap();
+    async fn test_is_workspace_package_installed() -> Result<()> {
+        let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
         let spec = known_package("test-package", "0.1.0");
-        assert!(!state.is_package_installed(&spec, &workspace).await.unwrap());
-        state
-            .add_installed_package(&spec, &workspace)
-            .await
-            .unwrap();
-        assert!(state.is_package_installed(&spec, &workspace).await.unwrap());
+        state.add_installed_package(&spec).await?;
+        assert!(state
+            .get_workspace_package(&spec.name, &workspace)
+            .await?
+            .is_none());
+        state.add_workspace_package(&spec, &workspace).await?;
+        assert!(state
+            .get_workspace_package(&spec.name, &workspace)
+            .await?
+            .is_some());
+        Ok(())
     }
 
     #[tokio::test]

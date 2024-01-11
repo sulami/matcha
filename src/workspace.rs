@@ -5,7 +5,7 @@ use shellexpand::tilde;
 use sqlx::FromRow;
 use tokio::fs::{create_dir_all, read_dir, read_link, remove_file};
 
-use crate::{package::InstalledPackageSpec, WORKSPACE_ROOT};
+use crate::{package::WorkspacePackageSpec, WORKSPACE_ROOT};
 
 /// A place that can have packages installed.
 #[derive(Debug, Clone, FromRow)]
@@ -54,7 +54,7 @@ impl Workspace {
     }
 
     /// Removes a package's files from this workspace.
-    pub async fn remove_package(&self, pkg: &InstalledPackageSpec) -> Result<()> {
+    pub async fn remove_package(&self, pkg: &WorkspacePackageSpec) -> Result<()> {
         let pkg_dir = pkg.directory();
 
         // Remove the package's bin symlinks.

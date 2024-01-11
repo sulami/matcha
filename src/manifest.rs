@@ -154,6 +154,7 @@ impl BuildLog {
 impl Package {
     /// Downloads, builds, and installs the package.
     pub async fn install(&self, workspace: &Workspace) -> Result<BuildLog> {
+        // TODO: Accept &State to check if we already have this package installed.
         let (build_dir, download_file_name) = self.download_source(&DefaultDownloader).await?;
         let (output_dir, log) = self.build(&build_dir, &download_file_name).await?;
         let pkg_dir = self.add_to_package_directory(&output_dir).await?;

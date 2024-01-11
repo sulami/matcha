@@ -15,7 +15,7 @@ pub(crate) mod ui;
 pub(crate) mod util;
 pub(crate) mod workspace;
 
-use package::{InstalledPackageSpec, KnownPackageSpec, PackageRequest};
+use package::{KnownPackageSpec, PackageRequest, WorkspacePackageSpec};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use ui::create_progress_bar;
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
 
                 if pkgs.is_empty() {
                     pkgs = state
-                        .installed_packages(&workspace)
+                        .workspace_packages(&workspace)
                         .await?
                         .into_iter()
                         .map(|pkg| pkg.name)
@@ -378,16 +378,21 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
         .await
         .context("failed to resolve package version")?;
 
-    if state.is_package_installed(&pkg_spec, workspace).await? {
-        return Err(anyhow!("package {} is already installed", pkg));
+    if state.get_workspace_package(pkg, workspace).await?.is_some() {
+        return Err(anyhow!(
+            "package {} is already installed in workspace {}",
+            pkg,
+            &workspace
+        ));
     }
 
     let pkg = state.get_package(&pkg_spec).await?;
     let log = pkg.install(workspace).await?;
 
     if log.is_success() {
+        state.add_installed_package(&pkg_spec).await?;
         state
-            .add_installed_package(&pkg_spec, workspace)
+            .add_workspace_package(&pkg_spec, workspace)
             .await
             .context("failed to register installed package")?;
     }
@@ -399,7 +404,7 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
 async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<Option<String>> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let existing_pkg = pkg_req
-        .resolve_installed_version(state, workspace)
+        .resolve_workspace_version(state, workspace)
         .await
         .context("failed to resolve package version")?;
 
@@ -413,7 +418,7 @@ async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Resu
         // Remove the old one
         existing_pkg.remove(workspace).await?;
         state
-            .remove_installed_package(&existing_pkg, workspace)
+            .remove_workspace_package(&existing_pkg, workspace)
             .await
             .context("failed to deregister installed package")?;
         Ok(Some(format!("Updated {existing_pkg} to {new_pkg}")))
@@ -425,8 +430,8 @@ async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Resu
 /// Uninstalls a package.
 async fn uninstall_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<String> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let pkg_spec: InstalledPackageSpec = pkg_req
-        .resolve_installed_version(state, workspace)
+    let pkg_spec: WorkspacePackageSpec = pkg_req
+        .resolve_workspace_version(state, workspace)
         .await
         .context("failed to resolve package version")?;
 
@@ -435,7 +440,7 @@ async fn uninstall_package(state: &State, pkg: &str, workspace: &Workspace) -> R
         .await
         .context("failed to remove package from workspace")?;
     state
-        .remove_installed_package(&pkg_spec, workspace)
+        .remove_workspace_package(&pkg_spec, workspace)
         .await
         .context("failed to deregister installed package")?;
 
@@ -444,7 +449,7 @@ async fn uninstall_package(state: &State, pkg: &str, workspace: &Workspace) -> R
 
 /// Lists all installed packages.
 async fn list_packages(state: &State, workspace: &Workspace) -> Result<()> {
-    let packages = state.installed_packages(workspace).await?;
+    let packages = state.workspace_packages(workspace).await?;
 
     for pkg in packages {
         println!("{}", pkg);
@@ -612,21 +617,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_install_package() {
-        let package_root = TempDir::new().unwrap();
+    async fn test_install_package() -> Result<()> {
+        let package_root = TempDir::new()?;
         crate::PACKAGE_ROOT
             .set(package_root.path().to_owned())
             .unwrap();
-        let state = setup_state_with_registry().await.unwrap();
+        let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
-        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
+        let pkg: PackageRequest = "test-package@0.1.0".parse()?;
+        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
 
-        install_package(&state, &pkg.name, &workspace)
-            .await
-            .unwrap();
-        assert!(state.is_package_installed(&pkg, &workspace).await.unwrap());
+        install_package(&state, &pkg.name, &workspace).await?;
+        assert!(state
+            .get_workspace_package(&pkg.name, &workspace)
+            .await?
+            .is_some());
+        Ok(())
     }
 
     #[tokio::test]
@@ -646,24 +653,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_uninstall_package() {
-        let package_root = TempDir::new().unwrap();
+    async fn test_uninstall_package() -> Result<()> {
+        let package_root = TempDir::new()?;
         crate::PACKAGE_ROOT
             .set(package_root.path().to_owned())
             .unwrap();
-        let state = setup_state_with_registry().await.unwrap();
+        let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg: PackageRequest = "test-package@0.1.0".parse().unwrap();
-        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
+        let pkg: PackageRequest = "test-package@0.1.0".parse()?;
+        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
 
-        install_package(&state, &pkg.name, &workspace)
-            .await
-            .unwrap();
-        uninstall_package(&state, &pkg.name, &workspace)
-            .await
-            .unwrap();
-        assert!(!state.is_package_installed(&pkg, &workspace).await.unwrap());
+        install_package(&state, &pkg.name, &workspace).await?;
+        uninstall_package(&state, &pkg.name, &workspace).await?;
+        assert!(state
+            .get_workspace_package(&pkg.name, &workspace)
+            .await?
+            .is_none());
+        Ok(())
     }
 
     #[tokio::test]
@@ -808,31 +815,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove_workspace_with_packages() {
-        let package_root = TempDir::new().unwrap();
+    async fn test_remove_workspace_with_packages() -> Result<()> {
+        let package_root = TempDir::new()?;
         crate::PACKAGE_ROOT
             .set(package_root.path().to_owned())
             .unwrap();
-        let state = setup_state_with_registry().await.unwrap();
+        let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("test").await;
 
-        add_workspace(&state, &workspace.name).await.unwrap();
-        install_package(&state, "test-package@0.1.0", &workspace)
-            .await
-            .unwrap();
-        remove_workspace(&state, "test").await.unwrap();
-        assert!(!state
-            .is_package_installed(
-                &"test-package@0.1.0"
-                    .parse::<PackageRequest>()
-                    .unwrap()
-                    .resolve_known_version(&state)
-                    .await
-                    .unwrap(),
-                &workspace
-            )
-            .await
-            .unwrap());
+        add_workspace(&state, &workspace.name).await?;
+        install_package(&state, "test-package@0.1.0", &workspace).await?;
+        remove_workspace(&state, "test").await?;
+        assert!(state
+            .get_workspace_package("test-package@0.1.0", &workspace)
+            .await?
+            .is_none());
+        Ok(())
     }
 
     #[tokio::test]
@@ -917,19 +915,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_install_package_doesnt_add_package_to_state_if_build_failed() {
-        let package_root = TempDir::new().unwrap();
+    async fn test_install_package_doesnt_add_package_to_state_if_build_failed() -> Result<()> {
+        let package_root = TempDir::new()?;
         crate::PACKAGE_ROOT
             .set(package_root.path().to_owned())
             .unwrap();
-        let state = setup_state_with_registry().await.unwrap();
+        let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg: PackageRequest = "failing-build@0.1.0".parse().unwrap();
-        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await.unwrap();
+        let pkg: PackageRequest = "failing-build@0.1.0".parse()?;
+        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
 
         let result = install_package(&state, &pkg.name, &workspace).await;
         assert!(result.is_ok());
-        assert!(!state.is_package_installed(&pkg, &workspace).await.unwrap());
+        assert!(state
+            .get_workspace_package(&pkg.name, &workspace)
+            .await?
+            .is_none());
+        Ok(())
     }
 }
