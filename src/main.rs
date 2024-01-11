@@ -188,7 +188,7 @@ struct Cli {
     #[arg(
         long,
         env = "MATCHA_STATE_DB",
-        default_value = "~/.config/matcha/state.db"
+        default_value = "~/.local/matcha/state.db"
     )]
     state_db: String,
 
@@ -196,7 +196,7 @@ struct Cli {
     #[arg(
         long,
         env = "MATCHA_WORKSPACE_ROOT",
-        default_value = "~/.config/matcha/workspaces"
+        default_value = "~/.local/matcha/workspaces"
     )]
     workspace_root: PathBuf,
 }
