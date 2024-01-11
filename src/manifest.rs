@@ -1,4 +1,9 @@
-use std::{fmt::Display, process::Stdio, str::FromStr};
+use std::{
+    fmt::Display,
+    path::{Path, PathBuf},
+    process::Stdio,
+    str::FromStr,
+};
 
 use anyhow::{anyhow, Context, Error, Result};
 use futures_util::StreamExt;
@@ -16,6 +21,7 @@ use url::Url;
 use crate::{
     download::{DefaultDownloader, Downloader},
     workspace::Workspace,
+    PACKAGE_ROOT,
 };
 
 /// Manifest metadata.
@@ -150,7 +156,8 @@ impl Package {
     pub async fn install(&self, workspace: &Workspace) -> Result<BuildLog> {
         let (build_dir, download_file_name) = self.download_source(&DefaultDownloader).await?;
         let (output_dir, log) = self.build(&build_dir, &download_file_name).await?;
-        self.install_to_workspace(workspace, &output_dir).await?;
+        let pkg_dir = self.add_to_package_directory(&output_dir).await?;
+        self.add_to_workspace(&pkg_dir, workspace).await?;
         Ok(log)
     }
 
@@ -218,14 +225,16 @@ impl Package {
         Ok((output_dir, log))
     }
 
-    /// Installs the package's build outputs to the workspace.
-    async fn install_to_workspace(
-        &self,
-        workspace: &Workspace,
-        output_dir: &TempDir,
-    ) -> Result<()> {
+    /// Installs the package's build outputs to the package directory.
+    ///
+    /// Returns the package's directory.
+    async fn add_to_package_directory(&self, output_dir: &TempDir) -> Result<PathBuf> {
         // Create the package directory.
-        let pkg_path = workspace.directory()?.join(&self.name);
+        let pkg_path = PACKAGE_ROOT
+            .get()
+            .ok_or(anyhow!("package root is not initialized"))?
+            .join(&self.name)
+            .join(&self.version);
         create_dir_all(&pkg_path)
             .await
             .context("failed to create package directory")?;
@@ -233,8 +242,12 @@ impl Package {
         // Move build outputs to the workspace/package directory.
         rename(output_dir, &pkg_path).await?;
 
-        // Setup symlinks from workspace/package/bin to workspace/bin
-        let pkg_bin_path = pkg_path.join("bin");
+        Ok(pkg_path)
+    }
+
+    /// Sets up symlinks from the package directory to the workspace bin directory.
+    async fn add_to_workspace(&self, pkg_dir: &Path, workspace: &Workspace) -> Result<()> {
+        let pkg_bin_path = pkg_dir.join("bin");
         let workspace_bin_path = workspace.bin_directory()?;
         if metadata(&pkg_bin_path).await.is_ok_and(|m| m.is_dir()) {
             let mut pkg_bin_dir_reader = read_dir(&pkg_bin_path).await?;
@@ -426,12 +439,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_install_package_to_workspace() {
+    async fn test_add_package_to_package_directory() {
         let workspace_root = TempDir::new().unwrap();
         crate::WORKSPACE_ROOT
             .set(workspace_root.path().to_owned())
             .unwrap();
-        let workspace = Workspace::new("test-workspace").await.unwrap();
+        let package_root = TempDir::new().unwrap();
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
@@ -451,12 +467,13 @@ mod tests {
             .build(&build_dir, &download_file_name)
             .await
             .unwrap();
-        package
-            .install_to_workspace(&workspace, &output_dir)
-            .await
-            .unwrap();
+        package.add_to_package_directory(&output_dir).await.unwrap();
 
-        let pkg_path = workspace.directory().unwrap().join(&package.name);
+        let pkg_path = crate::PACKAGE_ROOT
+            .get()
+            .unwrap()
+            .join(&package.name)
+            .join(&package.version);
         assert!(pkg_path.exists());
         assert!(pkg_path.is_dir());
         assert!(pkg_path.join("bin").exists());
@@ -468,17 +485,47 @@ mod tests {
                 .unwrap(),
             "foo"
         );
+    }
 
-        let workspace_bin_path = workspace.bin_directory().unwrap();
+    #[tokio::test]
+    async fn test_add_installed_package_to_workspace() -> Result<()> {
+        let workspace_root = TempDir::new()?;
+        crate::WORKSPACE_ROOT
+            .set(workspace_root.path().to_owned())
+            .unwrap();
+        let package_root = TempDir::new()?;
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
+        let workspace = Workspace::new("test-workspace").await?;
+        let package = Package {
+            name: "test-package".to_string(),
+            version: "0.1.0".to_string(),
+            registry: "test".to_string(),
+            source: Some("https://example.invalid/test-source".to_string()),
+            build: Some(
+                "mkdir $MATCHA_OUTPUT/bin && cp $MATCHA_SOURCE $MATCHA_OUTPUT/bin/".to_string(),
+            ),
+            ..Default::default()
+        };
+
+        let (build_dir, download_file_name) = package
+            .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
+            .await?;
+        let (output_dir, _log) = package.build(&build_dir, &download_file_name).await?;
+        let pkg_dir = package.add_to_package_directory(&output_dir).await?;
+        package.add_to_workspace(&pkg_dir, &workspace).await?;
+
+        let workspace_bin_path = workspace.bin_directory()?;
         assert!(workspace_bin_path.exists());
         assert!(workspace_bin_path.is_dir());
         assert!(workspace_bin_path.join("test-source").exists());
         assert!(workspace_bin_path.join("test-source").is_file());
         assert_eq!(
-            tokio::fs::read_to_string(workspace_bin_path.join("test-source"))
-                .await
-                .unwrap(),
+            tokio::fs::read_to_string(workspace_bin_path.join("test-source")).await?,
             "foo"
         );
+
+        Ok(())
     }
 }

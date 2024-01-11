@@ -71,12 +71,12 @@ impl Registry {
 
         // TODO: Keep and compare a manifest hash to avoid unnecessary updates.
 
-        if manifest
+        if let Some(pkg) = manifest
             .packages
             .iter()
-            .any(|p| !is_file_system_safe(&p.name))
+            .find(|p| !is_file_system_safe(&p.name) || !is_file_system_safe(&p.version))
         {
-            return Err(anyhow!("invalid package name"));
+            return Err(anyhow!("invalid package name or version: {}", pkg));
         }
 
         // Remove packages that are no longer in the manifest.

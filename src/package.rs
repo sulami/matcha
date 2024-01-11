@@ -1,9 +1,10 @@
-use std::{fmt::Display, str::FromStr};
+use std::{fmt::Display, path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, Context, Error, Result};
 use sqlx::FromRow;
+use tokio::fs::remove_dir_all;
 
-use crate::{state::State, workspace::Workspace};
+use crate::{state::State, workspace::Workspace, PACKAGE_ROOT};
 
 /// A package name and maybe a version, which needs resolution in some context.
 #[derive(Clone, Debug)]
@@ -193,6 +194,22 @@ impl InstalledPackageSpec {
             version,
             requested_version: request.version.clone().unwrap_or_default(),
         }
+    }
+
+    /// Returns the directory of this package.
+    pub fn directory(&self) -> PathBuf {
+        PACKAGE_ROOT
+            .get()
+            .expect("uninitialized package root")
+            .join(&self.name)
+            .join(&self.version)
+    }
+
+    /// Deletes this package's files from the package root.
+    pub async fn delete(&self) -> Result<()> {
+        let dir = self.directory();
+        remove_dir_all(dir).await?;
+        Ok(())
     }
 
     /// Returns the latest known version of this package, if it is newer than the installed one.

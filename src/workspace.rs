@@ -3,7 +3,7 @@ use std::{fmt::Display, ops::Deref, path::PathBuf};
 use anyhow::{Context, Result};
 use shellexpand::tilde;
 use sqlx::FromRow;
-use tokio::fs::{create_dir_all, read_dir, read_link, remove_dir_all, remove_file};
+use tokio::fs::{create_dir_all, read_dir, read_link, remove_file};
 
 use crate::{package::InstalledPackageSpec, WORKSPACE_ROOT};
 
@@ -55,7 +55,7 @@ impl Workspace {
 
     /// Removes a package's files from this workspace.
     pub async fn remove_package(&self, pkg: &InstalledPackageSpec) -> Result<()> {
-        let pkg_dir = self.directory()?.join(&pkg.name);
+        let pkg_dir = pkg.directory();
 
         // Remove the package's bin symlinks.
         let mut bin_dir_reader = read_dir(self.bin_directory()?).await?;
@@ -68,11 +68,6 @@ impl Workspace {
                     .context("failed to delete package bin symlink")?;
             }
         }
-
-        // Remove the package's directory.
-        remove_dir_all(&pkg_dir)
-            .await
-            .context("failed to delete package directory")?;
 
         Ok(())
     }

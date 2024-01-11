@@ -25,6 +25,9 @@ use workspace::Workspace;
 /// The root directory that holds all the workspaces.
 static WORKSPACE_ROOT: OnceCell<PathBuf> = OnceCell::new();
 
+/// The root directory that holds all installed packages.
+static PACKAGE_ROOT: OnceCell<PathBuf> = OnceCell::new();
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Cli::parse();
@@ -32,7 +35,12 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to load internal state")?;
 
-    WORKSPACE_ROOT.set(args.workspace_root).unwrap();
+    WORKSPACE_ROOT
+        .set(args.workspace_root)
+        .expect("double initialization of WORKSPACE_ROOT");
+    PACKAGE_ROOT
+        .set(args.package_root)
+        .expect("double initialization of PACKAGE_ROOT");
 
     match args.command {
         Command::Package(cmd) => match cmd {
@@ -192,13 +200,21 @@ struct Cli {
     )]
     state_db: String,
 
-    /// Path to the packge directory
+    /// Path to the workspace directory
     #[arg(
         long,
         env = "MATCHA_WORKSPACE_ROOT",
         default_value = "~/.local/matcha/workspaces"
     )]
     workspace_root: PathBuf,
+
+    /// Path to the packge directory
+    #[arg(
+        long,
+        env = "MATCHA_WORKSPACE_ROOT",
+        default_value = "~/.local/matcha/packages"
+    )]
+    package_root: PathBuf,
 }
 
 #[derive(Parser, Debug)]
@@ -414,10 +430,10 @@ async fn uninstall_package(state: &State, pkg: &str, workspace: &Workspace) -> R
         .await
         .context("failed to resolve package version")?;
 
-    pkg_spec
-        .remove(workspace)
+    workspace
+        .remove_package(&pkg_spec)
         .await
-        .context("failed to remove package")?;
+        .context("failed to remove package from workspace")?;
     state
         .remove_installed_package(&pkg_spec, workspace)
         .await
@@ -580,6 +596,8 @@ async fn workspace_shell(state: &State, workspace_name: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use tempfile::TempDir;
+
     use super::*;
 
     use crate::{registry::MockFetcher, workspace::test_workspace};
@@ -595,6 +613,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_install_package() {
+        let package_root = TempDir::new().unwrap();
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("global").await;
 
@@ -609,6 +631,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_install_package_refuses_if_package_is_already_installed() {
+        let package_root = TempDir::new().unwrap();
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("global").await;
 
@@ -621,6 +647,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_uninstall_package() {
+        let package_root = TempDir::new().unwrap();
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("global").await;
 
@@ -649,6 +679,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_packages() {
+        let package_root = TempDir::new().unwrap();
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("global").await;
 
@@ -775,6 +809,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_workspace_with_packages() {
+        let package_root = TempDir::new().unwrap();
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("test").await;
 
@@ -880,6 +918,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_install_package_doesnt_add_package_to_state_if_build_failed() {
+        let package_root = TempDir::new().unwrap();
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("global").await;
 
