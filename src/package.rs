@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Error, Result};
 use sqlx::FromRow;
 use tokio::fs::remove_dir_all;
 
-use crate::{state::State, workspace::Workspace, PACKAGE_ROOT};
+use crate::{manifest::Package, state::State, workspace::Workspace, PACKAGE_ROOT};
 
 /// A package name and maybe a version, which needs resolution in some context.
 #[derive(Clone, Debug)]
@@ -96,8 +96,8 @@ impl FromStr for PackageRequest {
     }
 }
 
-impl From<crate::manifest::Package> for PackageRequest {
-    fn from(pkg: crate::manifest::Package) -> Self {
+impl From<Package> for PackageRequest {
+    fn from(pkg: Package) -> Self {
         Self {
             name: pkg.name,
             version: Some(pkg.version),
@@ -142,6 +142,15 @@ impl KnownPackageSpec {
             requested_version: request.version.clone().unwrap_or_default(),
         }
     }
+
+    /// Creates a new spec from a [`crate::manifest::Package`].
+    pub fn from_manifest_package(pkg: &Package) -> Self {
+        Self {
+            name: pkg.name.clone(),
+            version: pkg.version.clone(),
+            requested_version: pkg.version.clone(),
+        }
+    }
 }
 
 impl Display for KnownPackageSpec {
@@ -181,22 +190,6 @@ impl WorkspacePackageSpec {
             version,
             requested_version: request.version.clone().unwrap_or_default(),
         }
-    }
-
-    /// Returns the directory of this package.
-    pub fn directory(&self) -> PathBuf {
-        PACKAGE_ROOT
-            .get()
-            .expect("uninitialized package root")
-            .join(&self.name)
-            .join(&self.version)
-    }
-
-    /// Deletes this package's files from the package root.
-    pub async fn delete(&self) -> Result<()> {
-        let dir = self.directory();
-        remove_dir_all(dir).await?;
-        Ok(())
     }
 
     /// Returns the latest known version of this package, if it is newer than the installed one.
@@ -249,6 +242,54 @@ impl From<KnownPackageSpec> for WorkspacePackageSpec {
             name: spec.name,
             version: spec.version,
             requested_version: spec.requested_version,
+        }
+    }
+}
+
+/// An installed package.
+///
+/// This is mostly a shorter alias for [`crate::manifest::Package`], which only has the name and
+/// version, as it is stored in the database.
+#[derive(Clone, Debug, FromRow)]
+pub struct InstalledPackage {
+    /// The name of the package.
+    pub name: String,
+    /// The version of the package.
+    pub version: String,
+}
+
+impl InstalledPackage {
+    /// Returns the directory of this package.
+    pub fn directory(&self) -> PathBuf {
+        PACKAGE_ROOT
+            .get()
+            .expect("uninitialized package root")
+            .join(&self.name)
+            .join(&self.version)
+    }
+
+    /// Deletes this package's files from the package root.
+    pub async fn delete(&self) -> Result<()> {
+        let dir = self.directory();
+        remove_dir_all(dir).await?;
+        Ok(())
+    }
+}
+
+impl From<&WorkspacePackageSpec> for InstalledPackage {
+    fn from(spec: &WorkspacePackageSpec) -> Self {
+        Self {
+            name: spec.name.clone(),
+            version: spec.version.clone(),
+        }
+    }
+}
+
+impl From<Package> for InstalledPackage {
+    fn from(pkg: Package) -> Self {
+        Self {
+            name: pkg.name,
+            version: pkg.version,
         }
     }
 }

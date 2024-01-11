@@ -9,7 +9,7 @@ use tokio::fs::create_dir_all;
 
 use crate::{
     manifest::Package,
-    package::{KnownPackageSpec, WorkspacePackageSpec},
+    package::{InstalledPackage, KnownPackageSpec, WorkspacePackageSpec},
     registry::Registry,
     workspace::Workspace,
 };
@@ -127,6 +127,21 @@ impl State {
             .await
             .context("failed to insert installed package into database")?;
         Ok(())
+    }
+
+    pub async fn get_installed_package(
+        &self,
+        pkg: &KnownPackageSpec,
+    ) -> Result<Option<InstalledPackage>> {
+        let result = sqlx::query_as::<_, InstalledPackage>(
+            "SELECT * FROM installed_packages WHERE name = $1 AND version = $2",
+        )
+        .bind(&pkg.name)
+        .bind(&pkg.version)
+        .fetch_optional(&self.db)
+        .await
+        .context("failed to fetch installed package from database")?;
+        Ok(result)
     }
 
     /// Adds a workspace package to the internal state.
@@ -830,5 +845,16 @@ mod tests {
             .await
             .unwrap();
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_installed_package() -> Result<()> {
+        let state = setup_state_with_registry().await?;
+        let spec = known_package("test-package", "0.1.0");
+        state.add_installed_package(&spec).await?;
+        let pkg = state.get_installed_package(&spec).await?.unwrap();
+        assert_eq!(pkg.name, spec.name);
+        assert_eq!(pkg.version, spec.version);
+        Ok(())
     }
 }

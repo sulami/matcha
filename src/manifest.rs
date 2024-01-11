@@ -20,6 +20,8 @@ use url::Url;
 
 use crate::{
     download::{DefaultDownloader, Downloader},
+    package::KnownPackageSpec,
+    state::State,
     workspace::Workspace,
     PACKAGE_ROOT,
 };
@@ -153,13 +155,21 @@ impl BuildLog {
 
 impl Package {
     /// Downloads, builds, and installs the package.
-    pub async fn install(&self, workspace: &Workspace) -> Result<BuildLog> {
-        // TODO: Accept &State to check if we already have this package installed.
-        let (build_dir, download_file_name) = self.download_source(&DefaultDownloader).await?;
-        let (output_dir, log) = self.build(&build_dir, &download_file_name).await?;
-        let pkg_dir = self.add_to_package_directory(&output_dir).await?;
-        self.add_to_workspace(&pkg_dir, workspace).await?;
-        Ok(log)
+    pub async fn install(&self, state: &State, workspace: &Workspace) -> Result<BuildLog> {
+        if let Some(installed_package) = state
+            .get_installed_package(&KnownPackageSpec::from_manifest_package(self))
+            .await?
+        {
+            self.add_to_workspace(&installed_package.directory(), workspace)
+                .await?;
+            Ok(BuildLog::new(self))
+        } else {
+            let (build_dir, download_file_name) = self.download_source(&DefaultDownloader).await?;
+            let (output_dir, log) = self.build(&build_dir, &download_file_name).await?;
+            let pkg_dir = self.add_to_package_directory(&output_dir).await?;
+            self.add_to_workspace(&pkg_dir, workspace).await?;
+            Ok(log)
+        }
     }
 
     /// Downloads the package source to a temporary build directory.

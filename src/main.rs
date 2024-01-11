@@ -387,7 +387,7 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
     }
 
     let pkg = state.get_package(&pkg_spec).await?;
-    let log = pkg.install(workspace).await?;
+    let log = pkg.install(&state, workspace).await?;
 
     if log.is_success() {
         state.add_installed_package(&pkg_spec).await?;
@@ -401,6 +401,7 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
 }
 
 /// Updates a package.
+// TODO migrate this onto build logs
 async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<Option<String>> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let existing_pkg = pkg_req
@@ -413,7 +414,7 @@ async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Resu
         state
             .get_package(&new_pkg)
             .await?
-            .install(workspace)
+            .install(&state, workspace)
             .await?;
         // Remove the old one
         existing_pkg.remove(workspace).await?;
