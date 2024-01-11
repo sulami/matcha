@@ -178,7 +178,19 @@ impl From<&str> for Uri {
         } else if s.starts_with("https://") {
             Self::Https(s.into())
         } else {
-            Self::File(s.into())
+            let path = PathBuf::from(s);
+            // Resolve to absolute path.
+            let path = if path.is_relative() {
+                std::env::current_dir()
+                    .expect("failed to get current working directory")
+                    .join(path)
+                    .to_str()
+                    .unwrap()
+                    .into()
+            } else {
+                path.to_str().unwrap().into()
+            };
+            Self::File(path)
         }
     }
 }
@@ -293,19 +305,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_uri_from_str() {
+    fn test_uri_from_str() -> Result<()> {
         assert_eq!(
-            Uri::from_str("http://example.invalid").unwrap(),
+            Uri::from_str("http://example.invalid")?,
             Uri::Http("http://example.invalid".into())
         );
         assert_eq!(
-            Uri::from_str("https://example.invalid").unwrap(),
+            Uri::from_str("https://example.invalid")?,
             Uri::Https("https://example.invalid".into())
         );
+        // Local paths should be absolute.
+        let pwd = std::env::current_dir()?;
         assert_eq!(
-            Uri::from_str("example").unwrap(),
-            Uri::File("example".into())
+            Uri::from_str("example")?,
+            Uri::File(pwd.join("example").to_str().unwrap().into())
         );
+        Ok(())
     }
 
     #[tokio::test]
