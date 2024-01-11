@@ -285,7 +285,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_manifest() {
+    fn test_parse_manifest() -> Result<()> {
         let manifest = r#"
             schema_version = 1
             name = "test"
@@ -303,7 +303,8 @@ mod tests {
             artifacts = ["target/release/test-package"]
         "#;
 
-        let manifest: Manifest = manifest.parse().unwrap();
+        let manifest: Manifest = manifest.parse()?;
+
         assert_eq!(manifest.schema_version, 1);
         assert_eq!(manifest.name, "test");
         assert_eq!(manifest.uri, "https://example.invalid/test");
@@ -332,10 +333,11 @@ mod tests {
             manifest.packages[0].build,
             Some("cargo build --release".to_string())
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_download_package_source() {
+    async fn test_download_package_source() -> Result<()> {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
@@ -346,15 +348,15 @@ mod tests {
 
         let (build_dir, download_file_name) = package
             .download_source(&MockDownloader::new(vec![]))
-            .await
-            .unwrap();
+            .await?;
         assert!(build_dir.path().exists());
         assert!(build_dir.path().is_dir());
         assert!(download_file_name.ends_with(".tar.gz"));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_build_package() {
+    async fn test_build_package() -> Result<()> {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
@@ -368,27 +370,22 @@ mod tests {
 
         let (build_dir, download_file_name) = package
             .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
-            .await
-            .unwrap();
-        let (output_dir, _log) = package
-            .build(&build_dir, &download_file_name)
-            .await
-            .unwrap();
+            .await?;
+        let (output_dir, _log) = package.build(&build_dir, &download_file_name).await?;
 
         let output_bin_dir = output_dir.path().join("bin");
         assert!(output_bin_dir.exists());
         assert!(output_bin_dir.is_dir());
         assert!(output_bin_dir.join("test-source").exists());
         assert_eq!(
-            tokio::fs::read_to_string(output_bin_dir.join("test-source"))
-                .await
-                .unwrap(),
+            tokio::fs::read_to_string(output_bin_dir.join("test-source")).await?,
             "foo"
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_build_package_without_source() {
+    async fn test_build_package_without_source() -> Result<()> {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
@@ -399,25 +396,20 @@ mod tests {
 
         let (build_dir, download_file_name) = package
             .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
-            .await
-            .unwrap();
-        let (output_dir, _log) = package
-            .build(&build_dir, &download_file_name)
-            .await
-            .unwrap();
+            .await?;
+        let (output_dir, _log) = package.build(&build_dir, &download_file_name).await?;
 
         assert!(output_dir.path().exists());
         assert!(output_dir.path().is_dir());
         assert_eq!(
-            tokio::fs::read_to_string(output_dir.path().join("output"))
-                .await
-                .unwrap(),
+            tokio::fs::read_to_string(output_dir.path().join("output")).await?,
             "hullo\n"
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_build_package_exists_on_first_error() {
+    async fn test_build_package_exists_on_first_error() -> Result<()> {
         let package = Package {
             name: "test-package".to_string(),
             version: "0.1.0".to_string(),
@@ -428,18 +420,15 @@ mod tests {
 
         let (build_dir, download_file_name) = package
             .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
-            .await
-            .unwrap();
-        let (_output_dir, log) = package
-            .build(&build_dir, &download_file_name)
-            .await
-            .unwrap();
+            .await?;
+        let (_output_dir, log) = package.build(&build_dir, &download_file_name).await?;
 
         assert!(!log.is_success());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_add_package_to_package_directory() {
+    async fn test_add_package_to_package_directory() -> Result<()> {
         let workspace_root = TempDir::new().unwrap();
         crate::WORKSPACE_ROOT
             .set(workspace_root.path().to_owned())
@@ -461,13 +450,9 @@ mod tests {
 
         let (build_dir, download_file_name) = package
             .download_source(&MockDownloader::new("foo".as_bytes().to_vec()))
-            .await
-            .unwrap();
-        let (output_dir, _log) = package
-            .build(&build_dir, &download_file_name)
-            .await
-            .unwrap();
-        package.add_to_package_directory(&output_dir).await.unwrap();
+            .await?;
+        let (output_dir, _log) = package.build(&build_dir, &download_file_name).await?;
+        package.add_to_package_directory(&output_dir).await?;
 
         let pkg_path = crate::PACKAGE_ROOT
             .get()
@@ -480,11 +465,10 @@ mod tests {
         assert!(pkg_path.join("bin").is_dir());
         assert!(pkg_path.join("bin").join("test-source").exists());
         assert_eq!(
-            tokio::fs::read_to_string(pkg_path.join("bin").join("test-source"))
-                .await
-                .unwrap(),
+            tokio::fs::read_to_string(pkg_path.join("bin").join("test-source")).await?,
             "foo"
         );
+        Ok(())
     }
 
     #[tokio::test]
