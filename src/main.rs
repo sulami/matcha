@@ -2,7 +2,7 @@ use std::{env::var, ops::Deref, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use manifest::BuildLog;
+use manifest::InstallLog;
 use once_cell::sync::OnceCell;
 use shellexpand::tilde;
 use tokio::task::JoinSet;
@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
                     results.push(result?);
                 }
                 pb.finish_and_clear();
-                let logs = results.into_iter().collect::<Result<Vec<BuildLog>>>()?;
+                let logs = results.into_iter().collect::<Result<Vec<InstallLog>>>()?;
                 for log in logs {
                     if log.is_success() {
                         println!("Installed {}", log.package_name);
@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
                 pb.finish_and_clear();
                 let logs = results
                     .into_iter()
-                    .collect::<Result<Vec<Option<BuildLog>>>>()?;
+                    .collect::<Result<Vec<Option<InstallLog>>>>()?;
                 for log in logs {
                     let Some(log) = log else {
                         continue;
@@ -385,7 +385,7 @@ async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
 }
 
 /// Installs a package.
-async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<BuildLog> {
+async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<InstallLog> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let pkg_spec: KnownPackageSpec = pkg_req
         .resolve_known_version(state)
@@ -404,7 +404,9 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
     let log = pkg.install(state, workspace).await?;
 
     if log.is_success() {
-        state.add_installed_package(&pkg_spec).await?;
+        if log.new_install {
+            state.add_installed_package(&pkg_spec).await?;
+        }
         state
             .add_workspace_package(&pkg_spec, workspace)
             .await
@@ -419,7 +421,7 @@ async fn update_package(
     state: &State,
     pkg: &str,
     workspace: &Workspace,
-) -> Result<Option<BuildLog>> {
+) -> Result<Option<InstallLog>> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let existing_pkg = pkg_req
         .resolve_workspace_version(state, workspace)
@@ -950,6 +952,24 @@ mod tests {
             .get_workspace_package(&pkg.name, &workspace)
             .await?
             .is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_install_uninstall_reinstall_package() -> Result<()> {
+        let package_root = TempDir::new()?;
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
+        let state = setup_state_with_registry().await?;
+        let (_root, workspace) = test_workspace("global").await;
+
+        let pkg: PackageRequest = "test-package@0.1.0".parse()?;
+        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
+        install_package(&state, &pkg.name, &workspace).await?;
+        uninstall_package(&state, &pkg.name, &workspace).await?;
+        install_package(&state, &pkg.name, &workspace).await?;
+
         Ok(())
     }
 }

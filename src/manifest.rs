@@ -151,9 +151,9 @@ impl Package {
     }
 }
 
-/// The build log of a package.
+/// The install log of a package, i.e. a report of the installation.
 #[derive(Debug)]
-pub struct BuildLog {
+pub struct InstallLog {
     /// The package this log is for.
     pub package_name: String,
     /// The exit code of the build.
@@ -162,16 +162,19 @@ pub struct BuildLog {
     pub stdout: String,
     /// The stderr of the build.
     pub stderr: String,
+    /// Whether this package was freshly installed.
+    pub new_install: bool,
 }
 
-impl BuildLog {
-    /// Creates a new build log for this package.
+impl InstallLog {
+    /// Creates a new install log for this package.
     fn new(package: &Package) -> Self {
         Self {
             package_name: format!("{package}"),
             exit_code: 0,
             stdout: String::new(),
             stderr: String::new(),
+            new_install: false,
         }
     }
 
@@ -183,14 +186,14 @@ impl BuildLog {
 
 impl Package {
     /// Downloads, builds, and installs the package.
-    pub async fn install(&self, state: &State, workspace: &Workspace) -> Result<BuildLog> {
+    pub async fn install(&self, state: &State, workspace: &Workspace) -> Result<InstallLog> {
         if let Some(installed_package) = state
             .get_installed_package(&KnownPackageSpec::from_manifest_package(self))
             .await?
         {
             self.add_to_workspace(&installed_package.directory(), workspace)
                 .await?;
-            Ok(BuildLog::new(self))
+            Ok(InstallLog::new(self))
         } else {
             let (build_dir, download_file_name) = self.download_source(&DefaultDownloader).await?;
             let (output_dir, log) = self.build(&build_dir, &download_file_name).await?;
@@ -237,9 +240,10 @@ impl Package {
         &self,
         build_dir: &TempDir,
         download_file_name: &str,
-    ) -> Result<(TempDir, BuildLog)> {
+    ) -> Result<(TempDir, InstallLog)> {
         let output_dir = TempDir::new().context("failed to create output directory")?;
-        let mut log = BuildLog::new(self);
+        let mut log = InstallLog::new(self);
+        log.new_install = true;
 
         // Perform build steps, if any.
         if let Some(build) = &self.build {
