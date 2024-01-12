@@ -1,9 +1,10 @@
-use std::{env::var, path::PathBuf};
+use std::{env::var, ops::Deref, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use manifest::BuildLog;
 use once_cell::sync::OnceCell;
+use shellexpand::tilde;
 use tokio::task::JoinSet;
 
 pub(crate) mod download;
@@ -36,10 +37,14 @@ async fn main() -> Result<()> {
         .context("Failed to load internal state")?;
 
     WORKSPACE_ROOT
-        .set(args.workspace_root)
+        .set(PathBuf::from(
+            tilde(&args.workspace_root.to_string_lossy()).deref(),
+        ))
         .expect("double initialization of WORKSPACE_ROOT");
     PACKAGE_ROOT
-        .set(args.package_root)
+        .set(PathBuf::from(
+            tilde(&args.package_root.to_string_lossy()).deref(),
+        ))
         .expect("double initialization of PACKAGE_ROOT");
 
     match args.command {

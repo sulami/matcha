@@ -279,7 +279,9 @@ impl Package {
             .context("failed to create package directory")?;
 
         // Move build outputs to the workspace/package directory.
-        rename(output_dir, &pkg_path).await?;
+        rename(output_dir, &pkg_path)
+            .await
+            .context("failed to move build outputs into package directory")?;
 
         Ok(pkg_path)
     }
@@ -288,6 +290,9 @@ impl Package {
     async fn add_to_workspace(&self, pkg_dir: &Path, workspace: &Workspace) -> Result<()> {
         let pkg_bin_path = pkg_dir.join("bin");
         let workspace_bin_path = workspace.bin_directory()?;
+        create_dir_all(workspace_bin_path.clone())
+            .await
+            .context("failed to create workspace bin directory")?;
         if metadata(&pkg_bin_path).await.is_ok_and(|m| m.is_dir()) {
             let mut pkg_bin_dir_reader = read_dir(&pkg_bin_path).await?;
             while let Some(entry) = pkg_bin_dir_reader.next_entry().await? {
