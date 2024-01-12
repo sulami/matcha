@@ -111,13 +111,11 @@ impl State {
         &self,
         workspace: &Workspace,
     ) -> Result<Vec<WorkspacePackageSpec>> {
-        let packages = sqlx::query_as::<_, WorkspacePackageSpec>(
-            "SELECT * FROM workspace_packages WHERE workspace = $1",
-        )
-        .bind(&workspace.name)
-        .fetch_all(&self.db)
-        .await
-        .context("failed to fetch workspace packages from database")?;
+        let packages = sqlx::query_as("SELECT * FROM workspace_packages WHERE workspace = $1")
+            .bind(&workspace.name)
+            .fetch_all(&self.db)
+            .await
+            .context("failed to fetch workspace packages from database")?;
         Ok(packages)
     }
 
@@ -136,14 +134,13 @@ impl State {
         &self,
         pkg: &KnownPackageSpec,
     ) -> Result<Option<InstalledPackage>> {
-        let result = sqlx::query_as::<_, InstalledPackage>(
-            "SELECT * FROM installed_packages WHERE name = $1 AND version = $2",
-        )
-        .bind(&pkg.name)
-        .bind(&pkg.version)
-        .fetch_optional(&self.db)
-        .await
-        .context("failed to fetch installed package from database")?;
+        let result =
+            sqlx::query_as("SELECT * FROM installed_packages WHERE name = $1 AND version = $2")
+                .bind(&pkg.name)
+                .bind(&pkg.version)
+                .fetch_optional(&self.db)
+                .await
+                .context("failed to fetch installed package from database")?;
         Ok(result)
     }
 
@@ -246,11 +243,10 @@ impl State {
 
     /// Returns all registries.
     pub async fn registries(&self) -> Result<Vec<Registry>> {
-        let registries =
-            sqlx::query_as::<_, Registry>("SELECT name, uri, last_fetched FROM registries")
-                .fetch_all(&self.db)
-                .await
-                .context("failed to fetch registries from database")?;
+        let registries = sqlx::query_as("SELECT name, uri, last_fetched FROM registries")
+            .fetch_all(&self.db)
+            .await
+            .context("failed to fetch registries from database")?;
         Ok(registries)
     }
 
@@ -281,7 +277,7 @@ impl State {
 
     /// Returns all known packages for a registry.
     pub async fn known_packages_for_registry(&self, reg: &Registry) -> Result<Vec<Package>> {
-        let pkgs = sqlx::query_as::<_, Package>(
+        let pkgs = sqlx::query_as(
             "SELECT * FROM known_packages WHERE registry = $1 ORDER BY name ASC, version DESC",
         )
         .bind(&reg.uri.to_string())
@@ -327,7 +323,7 @@ impl State {
     /// Searches known packages for a query.
     pub async fn search_known_packages(&self, query: &str) -> Result<Vec<Package>> {
         let query = format!("%{}%", query);
-        let pkgs = sqlx::query_as::<_, Package>(
+        let pkgs = sqlx::query_as(
             r"SELECT *
                 FROM known_packages
                 WHERE name LIKE $1
@@ -345,7 +341,7 @@ impl State {
     /// Searches know packages for a query, returning only the latest version of each package.
     pub async fn search_known_packages_latest_only(&self, query: &str) -> Result<Vec<Package>> {
         let query = format!("%{}%", query);
-        let pkgs = sqlx::query_as::<_, Package>(
+        let pkgs = sqlx::query_as(
             r"SELECT *
             FROM (
                 SELECT *
@@ -378,14 +374,12 @@ impl State {
 
     /// Get the full package from a spec.
     pub async fn get_package(&self, spec: &KnownPackageSpec) -> Result<Package> {
-        let pkg = sqlx::query_as::<_, Package>(
-            "SELECT * FROM known_packages WHERE name = $1 AND version = $2",
-        )
-        .bind(&spec.name)
-        .bind(&spec.version)
-        .fetch_one(&self.db)
-        .await
-        .context("failed to fetch known package from database")?;
+        let pkg = sqlx::query_as("SELECT * FROM known_packages WHERE name = $1 AND version = $2")
+            .bind(&spec.name)
+            .bind(&spec.version)
+            .fetch_one(&self.db)
+            .await
+            .context("failed to fetch known package from database")?;
         Ok(pkg)
     }
 
@@ -422,7 +416,7 @@ impl State {
 
     /// Gets a workspace.
     pub async fn get_workspace(&self, name: &str) -> Result<Option<Workspace>> {
-        let workspace = sqlx::query_as::<_, Workspace>("SELECT * FROM workspaces WHERE name = $1")
+        let workspace = sqlx::query_as("SELECT * FROM workspaces WHERE name = $1")
             .bind(name)
             .fetch_optional(&self.db)
             .await
@@ -432,11 +426,10 @@ impl State {
 
     /// Returns all workspaces.
     pub async fn workspaces(&self) -> Result<Vec<Workspace>> {
-        let workspaces =
-            sqlx::query_as::<_, Workspace>("SELECT * FROM workspaces ORDER BY name ASC")
-                .fetch_all(&self.db)
-                .await
-                .context("failed to fetch workspaces from database")?;
+        let workspaces = sqlx::query_as("SELECT * FROM workspaces ORDER BY name ASC")
+            .fetch_all(&self.db)
+            .await
+            .context("failed to fetch workspaces from database")?;
         Ok(workspaces)
     }
 }
