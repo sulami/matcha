@@ -164,6 +164,9 @@ async fn main() -> Result<()> {
 
                 search_packages(&state, &query, all_versions).await?;
             }
+            PackageCommand::GarbageCollect => {
+                garbage_collect_installed_packages(&state).await?;
+            }
         },
         Command::Workspace(cmd) => match cmd {
             WorkspaceCommand::Add { workspace } => {
@@ -301,6 +304,10 @@ enum PackageCommand {
         #[arg(long)]
         all_versions: bool,
     },
+
+    /// Garbage collect all installed packages that are not referenced by any workspace (alias: gc)
+    #[command(alias = "gc")]
+    GarbageCollect,
 }
 
 #[derive(Parser, Debug)]
@@ -465,6 +472,42 @@ async fn uninstall_package(state: &State, pkg: &str, workspace: &Workspace) -> R
         .context("failed to deregister installed package")?;
 
     Ok(format!("Uninstalled {pkg_spec}"))
+}
+
+/// Garbage collects all installed packages that are not referenced by any workspace.
+async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
+    let packages = state.unused_installed_packages().await?;
+    let count = packages.len() as u64;
+    let pb = create_progress_bar("Garbage collecting packages", count);
+    let mut set = JoinSet::new();
+
+    for package in packages {
+        let state = state.clone();
+        set.spawn(async move {
+            package
+                .delete()
+                .await
+                .context("failed to delete unused package")?;
+            state.remove_installed_package(&package).await?;
+            Ok(())
+        });
+    }
+
+    let mut results = vec![];
+    while let Some(result) = set.join_next().await {
+        pb.inc(1);
+        results.push(result?);
+    }
+
+    pb.finish_and_clear();
+    results
+        .into_iter()
+        .collect::<Result<()>>()
+        .context("failed to garbage collect packages")?;
+
+    println!("Garbage collected {} packages", count);
+
+    Ok(())
 }
 
 /// Lists all installed packages.
@@ -952,6 +995,27 @@ mod tests {
             .get_workspace_package(&pkg.name, &workspace)
             .await?
             .is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_garbage_collect_installed_packages() -> Result<()> {
+        let package_root = TempDir::new()?;
+        crate::PACKAGE_ROOT
+            .set(package_root.path().to_owned())
+            .unwrap();
+        let state = setup_state_with_registry().await?;
+        let (_root, workspace) = test_workspace("global").await;
+
+        let pkg: PackageRequest = "test-package@0.1.0".parse()?;
+        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
+        install_package(&state, &pkg.name, &workspace).await?;
+        uninstall_package(&state, &pkg.name, &workspace).await?;
+
+        assert!(state.get_installed_package(&pkg).await?.is_some());
+        garbage_collect_installed_packages(&state).await?;
+        assert!(state.get_installed_package(&pkg).await?.is_none());
+
         Ok(())
     }
 

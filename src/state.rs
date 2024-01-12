@@ -176,7 +176,7 @@ impl State {
     }
 
     /// Removes an installed package from the internal state.
-    pub async fn remove_installed_package(&self, pkg: &WorkspacePackageSpec) -> Result<()> {
+    pub async fn remove_installed_package(&self, pkg: &InstalledPackage) -> Result<()> {
         sqlx::query("DELETE FROM installed_packages WHERE name = $1 AND version = $2")
             .bind(&pkg.name)
             .bind(&pkg.version)
