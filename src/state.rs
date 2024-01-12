@@ -163,6 +163,18 @@ impl State {
         Ok(())
     }
 
+    /// Returns all installed packages that are not tied to a workspace.
+    pub async fn unused_installed_packages(&self) -> Result<Vec<InstalledPackage>> {
+        let packages = sqlx::query_as(
+            "SELECT * FROM installed_packages WHERE (name, version) NOT IN
+               (SELECT name, version FROM workspace_packages)",
+        )
+        .fetch_all(&self.db)
+        .await
+        .context("failed to fetch unused installed packages from database")?;
+        Ok(packages)
+    }
+
     /// Removes an installed package from the internal state.
     pub async fn remove_installed_package(&self, pkg: &WorkspacePackageSpec) -> Result<()> {
         sqlx::query("DELETE FROM installed_packages WHERE name = $1 AND version = $2")
@@ -865,6 +877,22 @@ mod tests {
             ..Default::default()
         }];
         assert!(state.add_known_packages(&pkgs).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unused_installed_packages() -> Result<()> {
+        let state = setup_state_with_registry().await?;
+        let (_root, workspace) = test_workspace("global").await;
+        let spec = known_package("test-package", "0.1.0");
+        state.add_installed_package(&spec).await?;
+        assert_eq!(state.unused_installed_packages().await?.len(), 1);
+        state.add_workspace_package(&spec, &workspace).await?;
+        assert!(state.unused_installed_packages().await?.is_empty());
+        state
+            .remove_workspace_package(&spec.into(), &workspace)
+            .await?;
+        assert_eq!(state.unused_installed_packages().await?.len(), 1);
         Ok(())
     }
 }
