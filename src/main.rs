@@ -108,13 +108,22 @@ async fn main() -> Result<()> {
                     results.push(result?);
                 }
                 pb.finish_and_clear();
-                let output = results
+                let logs = results
                     .into_iter()
-                    .collect::<Result<Vec<Option<String>>>>()?;
-                output
-                    .into_iter()
-                    .flatten()
-                    .for_each(|line| println!("{}", line));
+                    .collect::<Result<Vec<Option<BuildLog>>>>()?;
+                for log in logs {
+                    let Some(log) = log else {
+                        continue;
+                    };
+                    if log.is_success() {
+                        println!("Installed {}", log.package_name);
+                    } else {
+                        println!(
+                            "Failed to install {}, build exited with code {}\nSTDOUT:\n{}STDERR:\n{}",
+                            log.package_name, log.exit_code, log.stdout, log.stderr
+                        );
+                    }
+                }
             }
             PackageCommand::Remove { pkgs, workspace } => {
                 let workspace = get_create_workspace(&state, &workspace).await?;
@@ -401,8 +410,11 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
 }
 
 /// Updates a package.
-// TODO migrate this onto build logs
-async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<Option<String>> {
+async fn update_package(
+    state: &State,
+    pkg: &str,
+    workspace: &Workspace,
+) -> Result<Option<BuildLog>> {
     let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
     let existing_pkg = pkg_req
         .resolve_workspace_version(state, workspace)
@@ -411,7 +423,7 @@ async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Resu
 
     if let Some(new_pkg) = existing_pkg.available_update(state).await? {
         // Install the new version
-        state
+        let log = state
             .get_package(&new_pkg)
             .await?
             .install(state, workspace)
@@ -422,7 +434,7 @@ async fn update_package(state: &State, pkg: &str, workspace: &Workspace) -> Resu
             .remove_workspace_package(&existing_pkg, workspace)
             .await
             .context("failed to deregister installed package")?;
-        Ok(Some(format!("Updated {existing_pkg} to {new_pkg}")))
+        Ok(Some(log))
     } else {
         Ok(None)
     }
