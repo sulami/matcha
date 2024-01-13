@@ -407,7 +407,10 @@ async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Res
         ));
     }
 
-    let pkg = state.get_package(&pkg_spec).await?;
+    let pkg = state
+        .get_package(&pkg_spec)
+        .await?
+        .expect("package not found");
     let log = pkg.install(state, workspace).await?;
 
     if log.is_success() {
@@ -440,6 +443,7 @@ async fn update_package(
         let log = state
             .get_package(&new_pkg)
             .await?
+            .expect("package not found")
             .install(state, workspace)
             .await?;
         // Remove the old one

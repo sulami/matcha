@@ -385,11 +385,11 @@ impl State {
     }
 
     /// Get the full package from a spec.
-    pub async fn get_package(&self, spec: &KnownPackageSpec) -> Result<Package> {
+    pub async fn get_package(&self, spec: &KnownPackageSpec) -> Result<Option<Package>> {
         let pkg = sqlx::query_as("SELECT * FROM known_packages WHERE name = $1 AND version = $2")
             .bind(&spec.name)
             .bind(&spec.version)
-            .fetch_one(&self.db)
+            .fetch_optional(&self.db)
             .await
             .context("failed to fetch known package from database")?;
         Ok(pkg)

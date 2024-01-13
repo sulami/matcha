@@ -79,6 +79,41 @@ impl Registry {
             return Err(anyhow!("invalid package name or version: {}", pkg));
         }
 
+        // Check if any packages collide with another registry's ones.
+        let collisions = {
+            let mut collisions = Vec::new();
+            for pkg in &manifest.packages {
+                if let Some(other) = state
+                    .get_package(&KnownPackageSpec {
+                        name: pkg.name.clone(),
+                        version: pkg.version.clone(),
+                        requested_version: String::new(),
+                    })
+                    .await
+                    .context("failed to check for pre-existing known package")?
+                {
+                    if other.registry.as_ref().expect("orphaned package found")
+                        != &self.uri.to_string()
+                    {
+                        collisions.push((pkg, other));
+                    }
+                }
+            }
+            collisions
+        };
+        if !collisions.is_empty() {
+            let mut msg = String::new();
+            for (pkg, other) in collisions {
+                msg.push_str(&format!(
+                    "{}'s package {} collides with {}'s",
+                    pkg.registry.as_ref().unwrap(),
+                    pkg.name,
+                    other.registry.unwrap(),
+                ));
+            }
+            return Err(anyhow!(msg));
+        }
+
         // Remove packages that are no longer in the manifest.
         let know_packages = state.known_packages_for_registry(self).await?;
         for pkg in &know_packages {
@@ -384,5 +419,21 @@ mod tests {
             .fetch(&state, &MockFetcher::with_packages(&[unsafe_package]))
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_update_package_refuses_overwriting_other_registrys_package() -> Result<()> {
+        let state = State::load(":memory:").await?;
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry.initialize(&state, &MockFetcher::default()).await?;
+        registry.fetch(&state, &MockFetcher::default()).await?;
+        let mut second_registry = Registry::new("https://example.invalid/second-registry");
+        second_registry
+            .initialize(&state, &MockFetcher::default())
+            .await?;
+        let res = second_registry.fetch(&state, &MockFetcher::default()).await;
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("collides with"));
+        Ok(())
     }
 }
