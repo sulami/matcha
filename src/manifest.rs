@@ -20,7 +20,7 @@ use url::Url;
 
 use crate::{
     download::{DefaultDownloader, Downloader},
-    package::KnownPackageSpec,
+    package::{KnownPackageSpec, PackageSpec},
     state::State,
     workspace::Workspace,
     PACKAGE_ROOT,
@@ -49,14 +49,6 @@ impl Manifest {
         for package in &mut self.packages {
             package.registry = Some(uri.to_string());
         }
-    }
-
-    /// Returns whether this manifest is tied to a registry.
-    ///
-    /// If this is false, we have encountered a bug, because all manifests should come from a
-    /// registry.
-    pub fn is_tied_to_registry(&self) -> bool {
-        self.uri.is_some() && self.packages.iter().all(|p| p.is_tied_to_registry())
     }
 }
 
@@ -148,6 +140,12 @@ impl Package {
     /// registry.
     pub fn is_tied_to_registry(&self) -> bool {
         self.registry.is_some()
+    }
+}
+
+impl PackageSpec for Package {
+    fn spec(&self) -> (&str, &str) {
+        (&self.name, &self.version)
     }
 }
 

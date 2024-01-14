@@ -6,6 +6,14 @@ use tokio::fs::remove_dir_all;
 
 use crate::{manifest::Package, state::State, workspace::Workspace, PACKAGE_ROOT};
 
+/// A package specification that includes a name and a version.
+pub trait PackageSpec {
+    /// Return the name and version of this package.
+    ///
+    /// The version is a known good one, such as a resolved or installed one.
+    fn spec(&self) -> (&str, &str);
+}
+
 /// A package name and maybe a version, which needs resolution in some context.
 #[derive(Clone, Debug)]
 pub struct PackageRequest {
@@ -153,6 +161,12 @@ impl KnownPackageSpec {
     }
 }
 
+impl PackageSpec for KnownPackageSpec {
+    fn spec(&self) -> (&str, &str) {
+        (&self.name, &self.version)
+    }
+}
+
 impl Display for KnownPackageSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}@{}", self.name, self.version)
@@ -218,6 +232,12 @@ impl WorkspacePackageSpec {
     }
 }
 
+impl PackageSpec for WorkspacePackageSpec {
+    fn spec(&self) -> (&str, &str) {
+        (&self.name, &self.version)
+    }
+}
+
 impl Display for WorkspacePackageSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -273,6 +293,12 @@ impl InstalledPackage {
         let dir = self.directory();
         remove_dir_all(dir).await?;
         Ok(())
+    }
+}
+
+impl PackageSpec for InstalledPackage {
+    fn spec(&self) -> (&str, &str) {
+        (&self.name, &self.version)
     }
 }
 

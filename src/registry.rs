@@ -84,7 +84,7 @@ impl Registry {
             let mut collisions = Vec::new();
             for pkg in &manifest.packages {
                 if let Some(other) = state
-                    .get_package(&KnownPackageSpec {
+                    .get_known_package(&KnownPackageSpec {
                         name: pkg.name.clone(),
                         version: pkg.version.clone(),
                         requested_version: String::new(),

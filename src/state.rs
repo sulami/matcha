@@ -9,7 +9,7 @@ use tokio::fs::create_dir_all;
 
 use crate::{
     manifest::Package,
-    package::{InstalledPackage, KnownPackageSpec, WorkspacePackageSpec},
+    package::{InstalledPackage, KnownPackageSpec, PackageSpec, WorkspacePackageSpec},
     registry::Registry,
     workspace::Workspace,
 };
@@ -120,10 +120,11 @@ impl State {
     }
 
     /// Adds an installed package to the internal state.
-    pub async fn add_installed_package(&self, pkg: &KnownPackageSpec) -> Result<()> {
+    pub async fn add_installed_package(&self, pkg: &impl PackageSpec) -> Result<()> {
+        let (name, version) = pkg.spec();
         sqlx::query("INSERT INTO installed_packages (name, version) VALUES ($1, $2)")
-            .bind(&pkg.name)
-            .bind(&pkg.version)
+            .bind(name)
+            .bind(version)
             .execute(&self.db)
             .await
             .context("failed to insert installed package into database")?;
@@ -132,12 +133,13 @@ impl State {
 
     pub async fn get_installed_package(
         &self,
-        pkg: &KnownPackageSpec,
+        pkg: &impl PackageSpec,
     ) -> Result<Option<InstalledPackage>> {
+        let (name, version) = pkg.spec();
         let result =
             sqlx::query_as("SELECT * FROM installed_packages WHERE name = $1 AND version = $2")
-                .bind(&pkg.name)
-                .bind(&pkg.version)
+                .bind(name)
+                .bind(version)
                 .fetch_optional(&self.db)
                 .await
                 .context("failed to fetch installed package from database")?;
@@ -176,10 +178,11 @@ impl State {
     }
 
     /// Removes an installed package from the internal state.
-    pub async fn remove_installed_package(&self, pkg: &InstalledPackage) -> Result<()> {
+    pub async fn remove_installed_package(&self, pkg: &impl PackageSpec) -> Result<()> {
+        let (name, version) = pkg.spec();
         sqlx::query("DELETE FROM installed_packages WHERE name = $1 AND version = $2")
-            .bind(&pkg.name)
-            .bind(&pkg.version)
+            .bind(name)
+            .bind(version)
             .execute(&self.db)
             .await
             .context("failed to remove installed package from database")?;
@@ -189,14 +192,15 @@ impl State {
     /// Removes a workspace package from the internal state.
     pub async fn remove_workspace_package(
         &self,
-        pkg: &WorkspacePackageSpec,
+        pkg: &impl PackageSpec,
         workspace: &Workspace,
     ) -> Result<()> {
+        let (name, version) = pkg.spec();
         sqlx::query(
             "DELETE FROM workspace_packages WHERE name = $1 AND version = $2 AND workspace = $3",
         )
-        .bind(&pkg.name)
-        .bind(&pkg.version)
+        .bind(name)
+        .bind(version)
         .bind(&workspace.name)
         .execute(&self.db)
         .await
@@ -385,10 +389,11 @@ impl State {
     }
 
     /// Get the full package from a spec.
-    pub async fn get_package(&self, spec: &KnownPackageSpec) -> Result<Option<Package>> {
+    pub async fn get_known_package(&self, pkg: &impl PackageSpec) -> Result<Option<Package>> {
+        let (name, version) = pkg.spec();
         let pkg = sqlx::query_as("SELECT * FROM known_packages WHERE name = $1 AND version = $2")
-            .bind(&spec.name)
-            .bind(&spec.version)
+            .bind(name)
+            .bind(version)
             .fetch_optional(&self.db)
             .await
             .context("failed to fetch known package from database")?;
@@ -396,10 +401,11 @@ impl State {
     }
 
     /// Removes a known package.
-    pub async fn remove_known_package(&self, pkg: &KnownPackageSpec) -> Result<()> {
+    pub async fn remove_known_package(&self, pkg: &impl PackageSpec) -> Result<()> {
+        let (name, version) = pkg.spec();
         sqlx::query("DELETE FROM known_packages WHERE name = $1 AND version = $2")
-            .bind(&pkg.name)
-            .bind(&pkg.version)
+            .bind(name)
+            .bind(version)
             .execute(&self.db)
             .await
             .context("failed to remove known package from database")?;
@@ -482,9 +488,7 @@ mod tests {
         assert_eq!(packages.len(), 1);
         assert_eq!(packages[0].name, spec.name);
         assert_eq!(packages[0].version, spec.version);
-        state
-            .remove_workspace_package(&spec.into(), &workspace)
-            .await?;
+        state.remove_workspace_package(&spec, &workspace).await?;
         let packages = state.workspace_packages(&workspace).await?;
         assert!(packages.is_empty());
         Ok(())
@@ -889,9 +893,7 @@ mod tests {
         assert_eq!(state.unused_installed_packages().await?.len(), 1);
         state.add_workspace_package(&spec, &workspace).await?;
         assert!(state.unused_installed_packages().await?.is_empty());
-        state
-            .remove_workspace_package(&spec.into(), &workspace)
-            .await?;
+        state.remove_workspace_package(&spec, &workspace).await?;
         assert_eq!(state.unused_installed_packages().await?.len(), 1);
         Ok(())
     }
