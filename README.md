@@ -207,7 +207,11 @@ directory, which then goes into `$PATH` for workspace shells.
 - Bundles, as in dumping out the currently installed packages in a workspace,
   and loading them up into a workspace on a different machine. This can already
   be scripted with `package list`, but why not support it directly.
-- Potentially adding support for JSON/YAML registries, I aggreciate that TOML is
+- Multi-version packages to make packaging easier. Instead of having one package
+  per version in a manifest, allow a package to define a list of versions that
+  are all identical except for the `source`. To that end include some templating
+  functionality as well.
+- Potentially adding support for JSON/YAML registries, I appreciate that TOML is
   not everyone's cup of tea.
 - Download hashes, to verify file integrity.
 - Non-executable-binary package artifacts. Right now we only place files from
