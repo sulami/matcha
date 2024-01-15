@@ -7,6 +7,7 @@ use once_cell::sync::OnceCell;
 use shellexpand::tilde;
 use tokio::task::JoinSet;
 
+pub(crate) mod dependencies;
 pub(crate) mod download;
 pub(crate) mod manifest;
 pub(crate) mod package;
