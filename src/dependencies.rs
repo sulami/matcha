@@ -95,16 +95,22 @@ impl FromStr for VersionSpec {
     }
 }
 
-/// Attempts to merge a set of dependency requests into a single request that satisfies all of
-/// them.
-fn merge_version_specs(specs: Vec<VersionSpec>) -> Option<VersionSpec> {
-    let mut rv = VersionSpec::Any;
+/// Attempts to merge a set of dependency requests in such a way that each dependency is only
+/// present once, and the version spec for each dependency is the intersection of all the version
+/// specs for that dependency.
+pub fn merge_dependency_requests(
+    requests: impl IntoIterator<Item = DependencyRequest>,
+) -> Option<Vec<DependencyRequest>> {
+    let mut rv: Vec<DependencyRequest> = Vec::new();
 
-    for spec in specs {
-        if let Some(merged) = rv & spec {
-            rv = merged;
+    for request in requests {
+        if let Some(existing) = rv.iter_mut().find(|r| r.name == request.name) {
+            let Some(merged) = existing.version.clone() & request.version else {
+                return None;
+            };
+            existing.version = merged
         } else {
-            return None;
+            rv.push(request);
         }
     }
 
@@ -242,74 +248,186 @@ mod test {
     }
 
     #[test]
-    fn test_merge_version_specs() {
+    fn test_merge_dependency_requests_all_any() {
         assert_eq!(
-            merge_version_specs(vec![VersionSpec::Any, VersionSpec::Any]),
-            Some(VersionSpec::Any)
-        );
-        assert_eq!(
-            merge_version_specs(vec![
-                VersionSpec::Any,
-                VersionSpec::exact("1.0.0"),
-                VersionSpec::Any
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::Any
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::Any
+                }
             ]),
-            Some(VersionSpec::exact("1.0.0"))
+            Some(vec![DependencyRequest {
+                name: "foo".into(),
+                version: VersionSpec::Any
+            }])
         );
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_any_exact() {
         assert_eq!(
-            merge_version_specs(vec![
-                VersionSpec::Any,
-                VersionSpec::exact("1.0.0"),
-                VersionSpec::exact("1.0.1")
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::Any
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.0")
+                }
+            ]),
+            Some(vec![DependencyRequest {
+                name: "foo".into(),
+                version: VersionSpec::exact("1.0.0")
+            }])
+        );
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_any_partial() {
+        assert_eq!(
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::Any
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::partial("1")
+                }
+            ]),
+            Some(vec![DependencyRequest {
+                name: "foo".into(),
+                version: VersionSpec::partial("1")
+            }])
+        );
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_matching_partials() {
+        assert_eq!(
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::partial("1")
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::partial("1.0")
+                }
+            ]),
+            Some(vec![DependencyRequest {
+                name: "foo".into(),
+                version: VersionSpec::partial("1.0")
+            }])
+        );
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_mismatching_partials() {
+        assert_eq!(
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::partial("1")
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::partial("2")
+                }
             ]),
             None
         );
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_partial_exact() {
         assert_eq!(
-            merge_version_specs(vec![
-                VersionSpec::Any,
-                VersionSpec::partial("1"),
-                VersionSpec::Any
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::partial("1")
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.0")
+                }
             ]),
-            Some(VersionSpec::partial("1"))
+            Some(vec![DependencyRequest {
+                name: "foo".into(),
+                version: VersionSpec::exact("1.0.0")
+            }])
         );
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_exact_mismatch() {
         assert_eq!(
-            merge_version_specs(vec![
-                VersionSpec::Any,
-                VersionSpec::partial("1"),
-                VersionSpec::partial("1.0")
-            ]),
-            Some(VersionSpec::partial("1.0"))
-        );
-        assert_eq!(
-            merge_version_specs(vec![
-                VersionSpec::Any,
-                VersionSpec::partial("1"),
-                VersionSpec::partial("2")
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::Any
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.0")
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.1")
+                }
             ]),
             None
         );
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_matching_exact() {
         assert_eq!(
-            merge_version_specs(vec![
-                VersionSpec::Any,
-                VersionSpec::partial("1"),
-                VersionSpec::exact("1.0.0")
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.0")
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.0")
+                }
             ]),
-            Some(VersionSpec::exact("1.0.0"))
+            Some(vec![DependencyRequest {
+                name: "foo".into(),
+                version: VersionSpec::exact("1.0.0")
+            }])
         );
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_different_names() {
         assert_eq!(
-            merge_version_specs(vec![
-                VersionSpec::Any,
-                VersionSpec::partial("1"),
-                VersionSpec::exact("2.0.0")
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.0")
+                },
+                DependencyRequest {
+                    name: "bar".into(),
+                    version: VersionSpec::exact("2.0.0")
+                }
             ]),
-            None
-        );
-        assert_eq!(
-            merge_version_specs(vec![
-                VersionSpec::Any,
-                VersionSpec::exact("1.0.0"),
-                VersionSpec::exact("1.0.0")
-            ]),
-            Some(VersionSpec::exact("1.0.0"))
+            Some(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.0")
+                },
+                DependencyRequest {
+                    name: "bar".into(),
+                    version: VersionSpec::exact("2.0.0")
+                }
+            ])
         );
     }
 }
