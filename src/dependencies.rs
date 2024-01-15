@@ -1,4 +1,4 @@
-use std::ops::BitAnd;
+use std::{ops::BitAnd, str::FromStr};
 
 /// A dependency of a package, with an unresolved version.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -78,6 +78,20 @@ impl BitAnd for VersionSpec {
             (VersionSpec::Partial(a), VersionSpec::Partial(b)) if a.len() <= b.len() => rhs,
             _ => self,
         })
+    }
+}
+
+impl FromStr for VersionSpec {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "*" {
+            return Ok(VersionSpec::Any);
+        }
+        if let Some(v) = s.strip_prefix('~') {
+            return Ok(VersionSpec::partial(v));
+        }
+        Ok(VersionSpec::exact(s))
     }
 }
 
@@ -212,6 +226,19 @@ mod test {
         );
 
         assert_eq!(VersionSpec::partial("1") & VersionSpec::partial("2"), None);
+    }
+
+    #[test]
+    fn test_parse_version_spec() {
+        assert_eq!(VersionSpec::from_str("*").unwrap(), VersionSpec::Any);
+        assert_eq!(
+            VersionSpec::from_str("1.0.0").unwrap(),
+            VersionSpec::exact("1.0.0")
+        );
+        assert_eq!(
+            VersionSpec::from_str("~1.0.0").unwrap(),
+            VersionSpec::partial("1.0.0")
+        );
     }
 
     #[test]
