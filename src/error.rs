@@ -1,6 +1,6 @@
 use std::{collections::HashSet, error::Error, fmt::Display};
 
-use crate::dependencies::VersionSpec;
+use crate::package::VersionSpec;
 
 /// An invalid version spec was encountered.
 #[derive(Debug, Clone)]

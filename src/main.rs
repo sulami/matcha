@@ -2,13 +2,10 @@ use std::{env::var, ops::Deref, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use dependencies::{DependencyRequest, PackageChangeSet};
-use manifest::InstallLog;
 use once_cell::sync::OnceCell;
 use shellexpand::tilde;
 use tokio::task::JoinSet;
 
-pub(crate) mod dependencies;
 pub(crate) mod download;
 pub(crate) mod error;
 pub(crate) mod manifest;
@@ -18,7 +15,8 @@ pub(crate) mod state;
 pub(crate) mod util;
 pub(crate) mod workspace;
 
-use package::{KnownPackageSpec, WorkspacePackageSpec};
+use manifest::InstallLog;
+use package::{KnownPackageSpec, PackageChangeSet, PackageRequest, WorkspacePackageSpec};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use util::is_file_system_safe;
@@ -51,9 +49,9 @@ async fn main() -> Result<()> {
     match args.command {
         Command::Package(cmd) => match cmd {
             PackageCommand::Install { pkgs, workspace } => {
-                let pkg_reqs: Vec<DependencyRequest> = pkgs
+                let pkg_reqs: Vec<PackageRequest> = pkgs
                     .into_iter()
-                    .map(|pkg| pkg.parse::<DependencyRequest>())
+                    .map(|pkg| pkg.parse::<PackageRequest>())
                     .collect::<Result<Vec<_>>>()?;
 
                 let workspace = get_create_workspace(&state, &workspace).await?;
@@ -105,9 +103,9 @@ async fn main() -> Result<()> {
                         .collect();
                 }
 
-                let pkg_reqs: Vec<DependencyRequest> = pkgs
+                let pkg_reqs: Vec<PackageRequest> = pkgs
                     .into_iter()
-                    .map(|pkg| pkg.parse::<DependencyRequest>())
+                    .map(|pkg| pkg.parse::<PackageRequest>())
                     .collect::<Result<Vec<_>>>()?;
 
                 ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
@@ -147,9 +145,9 @@ async fn main() -> Result<()> {
             PackageCommand::Remove { pkgs, workspace } => {
                 let workspace = get_create_workspace(&state, &workspace).await?;
 
-                let pkg_reqs: Vec<DependencyRequest> = pkgs
+                let pkg_reqs: Vec<PackageRequest> = pkgs
                     .into_iter()
-                    .map(|pkg| pkg.parse::<DependencyRequest>())
+                    .map(|pkg| pkg.parse::<PackageRequest>())
                     .collect::<Result<Vec<_>>>()?;
 
                 let workspace_packages = state.workspace_packages(&workspace).await?;
@@ -414,7 +412,7 @@ async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
 /// Installs a package.
 async fn install_package(
     state: &State,
-    pkg: &DependencyRequest,
+    pkg: &PackageRequest,
     workspace: &Workspace,
 ) -> Result<InstallLog> {
     let pkg_spec: KnownPackageSpec = pkg
@@ -444,7 +442,7 @@ async fn install_package(
 /// Updates a package.
 async fn update_package(
     state: &State,
-    pkg: &DependencyRequest,
+    pkg: &PackageRequest,
     workspace: &Workspace,
 ) -> Result<Option<InstallLog>> {
     let existing_pkg = pkg
@@ -475,7 +473,7 @@ async fn update_package(
 /// Uninstalls a package.
 async fn uninstall_package(
     state: &State,
-    pkg: &DependencyRequest,
+    pkg: &PackageRequest,
     workspace: &Workspace,
 ) -> Result<String> {
     let pkg_spec: WorkspacePackageSpec = pkg
