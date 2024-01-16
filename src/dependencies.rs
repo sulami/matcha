@@ -1,4 +1,4 @@
-use std::{ops::BitAnd, str::FromStr};
+use std::{collections::HashSet, fmt::Display, ops::BitAnd, str::FromStr};
 
 /// A dependency of a package, with an unresolved version.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -95,30 +95,85 @@ impl FromStr for VersionSpec {
     }
 }
 
+/// Conflicts between dependency requests.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Conflicts {
+    /// The conflicting dependency requests.
+    inner: Vec<(String, HashSet<VersionSpec>)>,
+}
+
+impl Conflicts {
+    /// Adds a conflict.
+    fn add_conflict(&mut self, name: String, a: VersionSpec, b: VersionSpec) {
+        if let Some((_, versions)) = self.inner.iter_mut().find(|(n, _)| n == &name) {
+            versions.insert(a);
+            versions.insert(b);
+        } else {
+            self.inner.push((name, HashSet::from([a, b])));
+        }
+    }
+
+    /// Returns true if there are no conflicts.
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+}
+
+impl Display for Conflicts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (name, requests) in &self.inner {
+            writeln!(f, "conflicting requests for dependency '{}':", name)?;
+            for request in requests {
+                writeln!(f, "  {:?}", request)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for Conflicts {}
+
 /// Attempts to merge a set of dependency requests in such a way that each dependency is only
 /// present once, and the version spec for each dependency is the intersection of all the version
 /// specs for that dependency.
 pub fn merge_dependency_requests(
     requests: impl IntoIterator<Item = DependencyRequest>,
-) -> Option<Vec<DependencyRequest>> {
+) -> Result<Vec<DependencyRequest>, Conflicts> {
     let mut rv: Vec<DependencyRequest> = Vec::new();
+    let mut conflicts: Conflicts = Conflicts::default();
 
     for request in requests {
-        if let Some(existing) = rv.iter_mut().find(|r| r.name == request.name) {
-            let Some(merged) = existing.version.clone() & request.version else {
-                return None;
-            };
-            existing.version = merged
-        } else {
+        // New request, just add it.
+        let Some(existing_request) = rv.iter_mut().find(|r| r.name == request.name) else {
             rv.push(request);
+            continue;
+        };
+
+        // Existing compatible request, merge the version specs.
+        if let Some(merged) = existing_request.version.clone() & request.version.clone() {
+            existing_request.version = merged;
+            continue;
         }
+
+        // Incompatible request, either add a new conflict or add to an existing one.
+        conflicts.add_conflict(
+            request.name,
+            existing_request.version.clone(),
+            request.version,
+        )
     }
 
-    Some(rv)
+    if conflicts.is_empty() {
+        Ok(rv)
+    } else {
+        Err(conflicts)
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use anyhow::Result;
+
     use super::*;
 
     #[test]
@@ -248,7 +303,7 @@ mod test {
     }
 
     #[test]
-    fn test_merge_dependency_requests_all_any() {
+    fn test_merge_dependency_requests_all_any() -> Result<()> {
         assert_eq!(
             merge_dependency_requests(vec![
                 DependencyRequest {
@@ -259,16 +314,17 @@ mod test {
                     name: "foo".into(),
                     version: VersionSpec::Any
                 }
-            ]),
-            Some(vec![DependencyRequest {
+            ])?,
+            vec![DependencyRequest {
                 name: "foo".into(),
                 version: VersionSpec::Any
-            }])
+            }]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_merge_dependency_requests_any_exact() {
+    fn test_merge_dependency_requests_any_exact() -> Result<()> {
         assert_eq!(
             merge_dependency_requests(vec![
                 DependencyRequest {
@@ -279,16 +335,17 @@ mod test {
                     name: "foo".into(),
                     version: VersionSpec::exact("1.0.0")
                 }
-            ]),
-            Some(vec![DependencyRequest {
+            ])?,
+            vec![DependencyRequest {
                 name: "foo".into(),
                 version: VersionSpec::exact("1.0.0")
-            }])
+            }]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_merge_dependency_requests_any_partial() {
+    fn test_merge_dependency_requests_any_partial() -> Result<()> {
         assert_eq!(
             merge_dependency_requests(vec![
                 DependencyRequest {
@@ -299,16 +356,17 @@ mod test {
                     name: "foo".into(),
                     version: VersionSpec::partial("1")
                 }
-            ]),
-            Some(vec![DependencyRequest {
+            ])?,
+            vec![DependencyRequest {
                 name: "foo".into(),
                 version: VersionSpec::partial("1")
-            }])
+            }]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_merge_dependency_requests_matching_partials() {
+    fn test_merge_dependency_requests_matching_partials() -> Result<()> {
         assert_eq!(
             merge_dependency_requests(vec![
                 DependencyRequest {
@@ -319,12 +377,13 @@ mod test {
                     name: "foo".into(),
                     version: VersionSpec::partial("1.0")
                 }
-            ]),
-            Some(vec![DependencyRequest {
+            ])?,
+            vec![DependencyRequest {
                 name: "foo".into(),
                 version: VersionSpec::partial("1.0")
-            }])
+            }]
         );
+        Ok(())
     }
 
     #[test]
@@ -340,12 +399,17 @@ mod test {
                     version: VersionSpec::partial("2")
                 }
             ]),
-            None
+            Err(Conflicts {
+                inner: vec![(
+                    "foo".into(),
+                    HashSet::from([VersionSpec::partial("1"), VersionSpec::partial("2")])
+                )]
+            })
         );
     }
 
     #[test]
-    fn test_merge_dependency_requests_partial_exact() {
+    fn test_merge_dependency_requests_partial_exact() -> Result<()> {
         assert_eq!(
             merge_dependency_requests(vec![
                 DependencyRequest {
@@ -356,12 +420,13 @@ mod test {
                     name: "foo".into(),
                     version: VersionSpec::exact("1.0.0")
                 }
-            ]),
-            Some(vec![DependencyRequest {
+            ])?,
+            vec![DependencyRequest {
                 name: "foo".into(),
                 version: VersionSpec::exact("1.0.0")
-            }])
+            }]
         );
+        Ok(())
     }
 
     #[test]
@@ -381,12 +446,17 @@ mod test {
                     version: VersionSpec::exact("1.0.1")
                 }
             ]),
-            None
+            Err(Conflicts {
+                inner: vec![(
+                    "foo".into(),
+                    HashSet::from([VersionSpec::exact("1.0.0"), VersionSpec::exact("1.0.1")])
+                )]
+            })
         );
     }
 
     #[test]
-    fn test_merge_dependency_requests_matching_exact() {
+    fn test_merge_dependency_requests_matching_exact() -> Result<()> {
         assert_eq!(
             merge_dependency_requests(vec![
                 DependencyRequest {
@@ -397,16 +467,17 @@ mod test {
                     name: "foo".into(),
                     version: VersionSpec::exact("1.0.0")
                 }
-            ]),
-            Some(vec![DependencyRequest {
+            ])?,
+            vec![DependencyRequest {
                 name: "foo".into(),
                 version: VersionSpec::exact("1.0.0")
-            }])
+            }]
         );
+        Ok(())
     }
 
     #[test]
-    fn test_merge_dependency_requests_different_names() {
+    fn test_merge_dependency_requests_different_names() -> Result<()> {
         assert_eq!(
             merge_dependency_requests(vec![
                 DependencyRequest {
@@ -417,8 +488,8 @@ mod test {
                     name: "bar".into(),
                     version: VersionSpec::exact("2.0.0")
                 }
-            ]),
-            Some(vec![
+            ])?,
+            vec![
                 DependencyRequest {
                     name: "foo".into(),
                     version: VersionSpec::exact("1.0.0")
@@ -427,7 +498,38 @@ mod test {
                     name: "bar".into(),
                     version: VersionSpec::exact("2.0.0")
                 }
-            ])
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_dependency_requests_triple_conflict() {
+        assert_eq!(
+            merge_dependency_requests(vec![
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.0")
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.1")
+                },
+                DependencyRequest {
+                    name: "foo".into(),
+                    version: VersionSpec::exact("1.0.2")
+                }
+            ]),
+            Err(Conflicts {
+                inner: vec![(
+                    "foo".into(),
+                    HashSet::from([
+                        VersionSpec::exact("1.0.0"),
+                        VersionSpec::exact("1.0.1"),
+                        VersionSpec::exact("1.0.2")
+                    ])
+                )]
+            })
         );
     }
 }
