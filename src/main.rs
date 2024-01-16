@@ -72,6 +72,8 @@ async fn main() -> Result<()> {
                     set.spawn(async move { install_package(&state, &pkg, &workspace).await });
                 }
 
+                // TODO: Also apply changed packages.
+
                 let mut results = vec![];
                 while let Some(result) = set.join_next().await {
                     results.push(result?);
@@ -94,7 +96,6 @@ async fn main() -> Result<()> {
                 mut pkgs,
                 workspace,
             } => {
-                ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
                 let workspace = get_create_workspace(&state, &workspace).await?;
 
                 if pkgs.is_empty() {
@@ -106,10 +107,19 @@ async fn main() -> Result<()> {
                         .collect();
                 }
 
-                let pb = create_progress_bar("Updating packages", pkgs.len() as u64);
+                let pkg_reqs: Vec<DependencyRequest> = pkgs
+                    .into_iter()
+                    .map(|pkg| pkg.parse::<DependencyRequest>())
+                    .collect::<Result<Vec<_>>>()?;
+
+                ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
+
+                let workspace_packages = state.workspace_packages(&workspace).await?;
+                let changeset = PackageChangeSet::update_packages(&pkg_reqs, &workspace_packages)?;
+
                 let mut set = JoinSet::new();
 
-                for pkg in pkgs {
+                for pkg in changeset.changed_packages() {
                     let state = state.clone();
                     let workspace = workspace.clone();
                     set.spawn(async move { update_package(&state, &pkg, &workspace).await });
@@ -117,10 +127,8 @@ async fn main() -> Result<()> {
 
                 let mut results = vec![];
                 while let Some(result) = set.join_next().await {
-                    pb.inc(1);
                     results.push(result?);
                 }
-                pb.finish_and_clear();
                 let logs = results
                     .into_iter()
                     .collect::<Result<Vec<Option<InstallLog>>>>()?;
@@ -405,23 +413,10 @@ async fn install_package(
     pkg: &DependencyRequest,
     workspace: &Workspace,
 ) -> Result<InstallLog> {
-    // let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    // TODO: Move resolution down below merge_dependency_requests, because an existing package
-    // might have already pulled in this package as a dependency, but have a stricter version
-    // requirement.
     let pkg_spec: KnownPackageSpec = pkg
         .resolve_known_version(state)
         .await
         .context("failed to resolve package version")?;
-
-    // // Check if the package is already installed in the workspace.
-    // if state.get_workspace_package(pkg, workspace).await?.is_some() {
-    //     return Err(anyhow!(
-    //         "package {} is already installed in workspace {}",
-    //         pkg,
-    //         &workspace
-    //     ));
-    // }
 
     let pkg = state
         .get_known_package(&pkg_spec)
@@ -445,11 +440,10 @@ async fn install_package(
 /// Updates a package.
 async fn update_package(
     state: &State,
-    pkg: &str,
+    pkg: &DependencyRequest,
     workspace: &Workspace,
 ) -> Result<Option<InstallLog>> {
-    let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let existing_pkg = pkg_req
+    let existing_pkg = pkg
         .resolve_workspace_version(state, workspace)
         .await
         .context("failed to resolve package version")?;

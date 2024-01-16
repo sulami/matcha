@@ -52,30 +52,6 @@ impl PackageRequest {
 
         Ok(WorkspacePackageSpec::from_request(self, resolved))
     }
-
-    /// If the version isn't fully qualified, resolves it to the latest known one.
-    ///
-    /// Returns an error if the package is not known.
-    /// If multiple versions of the package are known, the first (latest) one that matches is used.
-    pub async fn resolve_known_version(&self, state: &State) -> Result<KnownPackageSpec> {
-        let known_versions = state.known_package_versions(&self.name).await?;
-
-        if known_versions.is_empty() {
-            return Err(anyhow!("package {} is not known", self));
-        }
-
-        let Some(resolved) =
-            find_matching_version(&known_versions, self.version.as_deref().unwrap_or_default())
-        else {
-            return Err(anyhow!(
-                "package {} is not known, but these versions are: {}",
-                self,
-                known_versions.join(", ")
-            ));
-        };
-
-        Ok(KnownPackageSpec::from_request(self, resolved))
-    }
 }
 
 impl Display for PackageRequest {
@@ -145,15 +121,6 @@ pub struct KnownPackageSpec {
 }
 
 impl KnownPackageSpec {
-    /// Create a new spec from a [`PackageRequest`] and a resolved version.
-    pub fn from_request(request: &PackageRequest, version: String) -> Self {
-        Self {
-            name: request.name.clone(),
-            version,
-            requested_version: request.version.clone().unwrap_or_default(),
-        }
-    }
-
     /// Creates a new spec from a [`crate::manifest::Package`].
     pub fn from_manifest_package(pkg: &Package) -> Self {
         Self {
@@ -214,6 +181,14 @@ impl WorkspacePackageSpec {
             name: request.name.clone(),
             version,
             requested_version: request.version.clone().unwrap_or_default(),
+        }
+    }
+
+    pub fn from_dependency_request(request: &DependencyRequest, version: &str) -> Self {
+        Self {
+            name: request.name.clone(),
+            version: version.to_string(),
+            requested_version: format!("{}", request.version),
         }
     }
 
@@ -335,11 +310,7 @@ impl From<Package> for InstalledPackage {
 mod tests {
     use super::*;
 
-    use crate::{
-        manifest::Package as ManifestPackage,
-        registry::{MockFetcher, Registry},
-        workspace::test_workspace,
-    };
+    use crate::workspace::test_workspace;
 
     /// Returns a known package spec with the given name and version.
     fn known_package(name: &str, version: &str) -> KnownPackageSpec {
@@ -434,57 +405,6 @@ mod tests {
             .resolve_workspace_version(&state, &workspace)
             .await
             .is_err());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_resolve_known_version() {
-        let state = State::load(":memory:").await.unwrap();
-        let mut registry = Registry::new("https://example.invalid/registry");
-        registry
-            .initialize(&state, &MockFetcher::default())
-            .await
-            .unwrap();
-        state
-            .add_known_packages(&[ManifestPackage {
-                name: "foo".to_string(),
-                version: "1.0.0".to_string(),
-                registry: Some("https://example.invalid/registry".to_string()),
-                ..Default::default()
-            }])
-            .await
-            .unwrap();
-        let pkg = PackageRequest {
-            name: "foo".to_string(),
-            version: None,
-        };
-        let spec = pkg.resolve_known_version(&state).await.unwrap();
-        assert_eq!(spec.version, "1.0.0");
-    }
-
-    #[tokio::test]
-    async fn test_resolve_known_version_fails_if_not_known() {
-        let state = State::load(":memory:").await.unwrap();
-        let pkg = PackageRequest {
-            name: "foo".to_string(),
-            version: None,
-        };
-        assert!(pkg.resolve_known_version(&state).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_resolve_known_version_fails_if_this_version_is_not_known() -> Result<()> {
-        let state = State::load(":memory:").await?;
-        let (_root, workspace) = test_workspace("global").await;
-        let spec = known_package("foo", "1.0.0");
-
-        state.add_installed_package(&spec).await?;
-        state.add_workspace_package(&spec, &workspace).await?;
-        let pkg = PackageRequest {
-            name: "foo".to_string(),
-            version: Some("2.0.0".to_string()),
-        };
-        assert!(pkg.resolve_known_version(&state).await.is_err());
         Ok(())
     }
 

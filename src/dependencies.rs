@@ -6,6 +6,7 @@ use crate::{
     error::{Conflicts, InvalidVersonSpec},
     package::{KnownPackageSpec, PackageRequest, PackageSpec, WorkspacePackageSpec},
     state::State,
+    workspace::Workspace,
 };
 
 /// A set of changes to workspace packages.
@@ -14,7 +15,7 @@ pub struct PackageChangeSet {
     /// Packages that need to be added.
     add: Vec<DependencyRequest>,
     /// Packages that need to be upgraded or downgraded.
-    grade: Vec<DependencyRequest>,
+    change: Vec<DependencyRequest>,
     /// Packages that need to be removed.
     remove: Vec<DependencyRequest>,
 }
@@ -35,8 +36,29 @@ impl PackageChangeSet {
         Ok(change_set)
     }
 
-    pub fn added_packages(&self) -> Vec<DependencyRequest> {
-        self.add.clone()
+    /// Creates a changeset that updates the given packages.
+    pub fn update_packages(
+        pkgs: &[DependencyRequest],
+        workspace_packages: &[WorkspacePackageSpec],
+    ) -> Result<Self> {
+        let mut change_set = Self {
+            change: Vec::from(pkgs),
+            ..Self::default()
+        };
+
+        change_set.resolve(workspace_packages)?;
+
+        Ok(change_set)
+    }
+
+    /// Returns the packages that need to be added.
+    pub fn added_packages(&self) -> impl Iterator<Item = DependencyRequest> + '_ {
+        self.add.iter().cloned()
+    }
+
+    /// Returns the packages that need to be upgraded or downgraded.
+    pub fn changed_packages(&self) -> impl Iterator<Item = DependencyRequest> + '_ {
+        self.change.iter().cloned()
     }
 
     /// Resolves the changeset based on the current workflow packages.
@@ -62,7 +84,7 @@ impl PackageChangeSet {
                 }
                 // The currently included package does not satisfy the request, add it to the
                 // grade list to be upgraded or downgraded.
-                self.grade.push(request);
+                self.change.push(request);
             } else {
                 // The request does not match a currently included package, add it to the add list
                 // to be installed.
@@ -84,10 +106,11 @@ pub struct DependencyRequest {
 }
 
 impl DependencyRequest {
-    /// If the version isn't fully qualified, resolves it to the latest known one.
+    /// Resolves this request to a known package that can be installed.
     ///
-    /// Returns an error if the package is not known.
-    /// If multiple versions of the package are known, the first (latest) one that matches is used.
+    /// If the version isn't fully qualified, resolves it to the latest known one. Returns an error
+    /// if the package is not known. If multiple versions of the package are known, the first
+    /// (latest) one that matches is used.
     pub async fn resolve_known_version(&self, state: &State) -> Result<KnownPackageSpec> {
         let known_versions = state.known_package_versions(&self.name).await?;
 
@@ -104,6 +127,33 @@ impl DependencyRequest {
         };
 
         Ok(KnownPackageSpec::from_dependency_request(self, resolved))
+    }
+
+    /// Resolves this request to a workspace package from the given workspace.
+    ///
+    /// If the version isn't fully qualified, resolves it to the latest installed one. Returns an
+    /// error if the package is not installed in this workspace.
+    pub async fn resolve_workspace_version(
+        &self,
+        state: &State,
+        workspace: &Workspace,
+    ) -> Result<WorkspacePackageSpec> {
+        let Some(installed) = state.get_workspace_package(&self.name, workspace).await? else {
+            return Err(anyhow!("package {} is not installed", self));
+        };
+
+        if !self.version.matches(&installed.version) {
+            return Err(anyhow!(
+                "package {} is not in this workspace, but this versions is: {}",
+                self,
+                installed.version
+            ));
+        }
+
+        Ok(WorkspacePackageSpec::from_dependency_request(
+            self,
+            &installed.version,
+        ))
     }
 }
 
@@ -146,7 +196,11 @@ impl From<WorkspacePackageSpec> for DependencyRequest {
 
 impl Display for DependencyRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}@{}", self.name, self.version)
+        if let VersionSpec::Any = self.version {
+            write!(f, "{}", self.name)
+        } else {
+            write!(f, "{}@{}", self.name, self.version)
+        }
     }
 }
 
@@ -157,9 +211,10 @@ impl PackageSpec for DependencyRequest {
 }
 
 /// A version spec, which can be used to resolve to a concrete version.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub enum VersionSpec {
     /// Any version at all.
+    #[default]
     Any,
     /// A version matching this prefix.
     Partial(String),
@@ -191,7 +246,8 @@ impl VersionSpec {
         }
     }
 
-    /// Returns `true` if `self` is compatible with `other`.
+    /// Returns `true` if `self` is compatible with `other`, in that there is at least a
+    /// theoretical version that satisfies both.
     fn is_compatible(&self, other: &Self) -> bool {
         match (self, other) {
             (VersionSpec::Any, _) => true,
@@ -213,12 +269,6 @@ impl Display for VersionSpec {
             VersionSpec::Exact(version) => write!(f, "{}", version),
             VersionSpec::Partial(prefix) => write!(f, "~{}", prefix),
         }
-    }
-}
-
-impl Default for VersionSpec {
-    fn default() -> Self {
-        VersionSpec::Any
     }
 }
 
@@ -300,6 +350,12 @@ mod test {
     use std::collections::HashSet;
 
     use anyhow::Result;
+
+    use crate::{
+        manifest::Package as ManifestPackage,
+        registry::{MockFetcher, Registry},
+        workspace::test_workspace,
+    };
 
     use super::*;
 
@@ -658,5 +714,70 @@ mod test {
                 )]
             })
         );
+    }
+
+    #[test]
+    fn test_dependency_request_parse_round_trip() -> Result<()> {
+        let exact = "foo@1.0.0";
+        assert_eq!(format!("{}", exact.parse::<DependencyRequest>()?), exact);
+
+        let partial = "foo@~1.0.0";
+        assert_eq!(
+            format!("{}", partial.parse::<DependencyRequest>()?),
+            partial
+        );
+
+        let any = "foo";
+        assert_eq!(format!("{}", any.parse::<DependencyRequest>()?), any);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_known_version() -> Result<()> {
+        let state = State::load(":memory:").await.unwrap();
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
+        state
+            .add_known_packages(&[ManifestPackage {
+                name: "foo".to_string(),
+                version: "1.0.0".to_string(),
+                registry: Some("https://example.invalid/registry".to_string()),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+        let pkg: DependencyRequest = "foo".parse()?;
+        let spec = pkg.resolve_known_version(&state).await.unwrap();
+        assert_eq!(spec.version, "1.0.0");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_known_version_fails_if_not_known() -> Result<()> {
+        let state = State::load(":memory:").await.unwrap();
+        let pkg: DependencyRequest = "foo".parse()?;
+        assert!(pkg.resolve_known_version(&state).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_known_version_fails_if_this_version_is_not_known() -> Result<()> {
+        let state = State::load(":memory:").await?;
+        let (_root, workspace) = test_workspace("global").await;
+        let spec = KnownPackageSpec {
+            name: "foo".into(),
+            version: "1.0.0".into(),
+            requested_version: "1.0.0".into(),
+        };
+
+        state.add_installed_package(&spec).await?;
+        state.add_workspace_package(&spec, &workspace).await?;
+        let pkg: DependencyRequest = "foo@2.0.0".parse()?;
+        assert!(pkg.resolve_known_version(&state).await.is_err());
+        Ok(())
     }
 }
