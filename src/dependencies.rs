@@ -51,6 +51,21 @@ impl PackageChangeSet {
         Ok(change_set)
     }
 
+    /// Creates a changeset that removes the given packages.
+    pub fn remove_packages(
+        pkgs: &[DependencyRequest],
+        workspace_packages: &[WorkspacePackageSpec],
+    ) -> Result<Self> {
+        let mut change_set = Self {
+            remove: Vec::from(pkgs),
+            ..Self::default()
+        };
+
+        change_set.resolve(workspace_packages)?;
+
+        Ok(change_set)
+    }
+
     /// Returns the packages that need to be added.
     pub fn added_packages(&self) -> impl Iterator<Item = DependencyRequest> + '_ {
         self.add.iter().cloned()
@@ -59,6 +74,11 @@ impl PackageChangeSet {
     /// Returns the packages that need to be upgraded or downgraded.
     pub fn changed_packages(&self) -> impl Iterator<Item = DependencyRequest> + '_ {
         self.change.iter().cloned()
+    }
+
+    /// Returns the packages that need to be removed.
+    pub fn removed_packages(&self) -> impl Iterator<Item = DependencyRequest> + '_ {
+        self.remove.iter().cloned()
     }
 
     /// Resolves the changeset based on the current workflow packages.
@@ -126,7 +146,7 @@ impl DependencyRequest {
             ));
         };
 
-        Ok(KnownPackageSpec::from_dependency_request(self, resolved))
+        Ok(KnownPackageSpec::from_request(self, resolved))
     }
 
     /// Resolves this request to a workspace package from the given workspace.
@@ -150,10 +170,7 @@ impl DependencyRequest {
             ));
         }
 
-        Ok(WorkspacePackageSpec::from_dependency_request(
-            self,
-            &installed.version,
-        ))
+        Ok(WorkspacePackageSpec::from_request(self, &installed.version))
     }
 }
 
@@ -778,6 +795,54 @@ mod test {
         state.add_workspace_package(&spec, &workspace).await?;
         let pkg: DependencyRequest = "foo@2.0.0".parse()?;
         assert!(pkg.resolve_known_version(&state).await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_workspace_version() -> Result<()> {
+        let state = State::load(":memory:").await?;
+        let (_root, workspace) = test_workspace("global").await;
+        let spec = KnownPackageSpec {
+            name: "foo".into(),
+            version: "1.0.0".into(),
+            requested_version: "1.0.0".into(),
+        };
+        state.add_installed_package(&spec).await?;
+        state.add_workspace_package(&spec, &workspace).await?;
+        let pkg: DependencyRequest = "foo".parse()?;
+        let spec = pkg.resolve_workspace_version(&state, &workspace).await?;
+        assert_eq!(spec.version, "1.0.0");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_workspace_version_fails_if_not_installed() -> Result<()> {
+        let state = State::load(":memory:").await.unwrap();
+        let (_root, workspace) = test_workspace("global").await;
+        let pkg: DependencyRequest = "foo".parse()?;
+        assert!(pkg
+            .resolve_workspace_version(&state, &workspace)
+            .await
+            .is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_resolve_workspace_version_fails_if_this_version_is_not_installed() -> Result<()> {
+        let state = State::load(":memory:").await?;
+        let (_root, workspace) = test_workspace("global").await;
+        let spec = KnownPackageSpec {
+            name: "foo".into(),
+            version: "1.0.0".into(),
+            requested_version: "1.0.0".into(),
+        };
+        state.add_installed_package(&spec).await?;
+        state.add_workspace_package(&spec, &workspace).await?;
+        let pkg: DependencyRequest = "foo@2".parse()?;
+        assert!(pkg
+            .resolve_workspace_version(&state, &workspace)
+            .await
+            .is_err());
         Ok(())
     }
 }

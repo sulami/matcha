@@ -18,7 +18,7 @@ pub(crate) mod state;
 pub(crate) mod util;
 pub(crate) mod workspace;
 
-use package::{KnownPackageSpec, PackageRequest, WorkspacePackageSpec};
+use package::{KnownPackageSpec, WorkspacePackageSpec};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use util::is_file_system_safe;
@@ -146,9 +146,18 @@ async fn main() -> Result<()> {
             }
             PackageCommand::Remove { pkgs, workspace } => {
                 let workspace = get_create_workspace(&state, &workspace).await?;
+
+                let pkg_reqs: Vec<DependencyRequest> = pkgs
+                    .into_iter()
+                    .map(|pkg| pkg.parse::<DependencyRequest>())
+                    .collect::<Result<Vec<_>>>()?;
+
+                let workspace_packages = state.workspace_packages(&workspace).await?;
+                let changeset = PackageChangeSet::remove_packages(&pkg_reqs, &workspace_packages)?;
+
                 let mut set = JoinSet::new();
 
-                for pkg in pkgs {
+                for pkg in changeset.removed_packages() {
                     let state = state.clone();
                     let workspace = workspace.clone();
                     set.spawn(async move { uninstall_package(&state, &pkg, &workspace).await });
@@ -464,9 +473,12 @@ async fn update_package(
 }
 
 /// Uninstalls a package.
-async fn uninstall_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<String> {
-    let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let pkg_spec: WorkspacePackageSpec = pkg_req
+async fn uninstall_package(
+    state: &State,
+    pkg: &DependencyRequest,
+    workspace: &Workspace,
+) -> Result<String> {
+    let pkg_spec: WorkspacePackageSpec = pkg
         .resolve_workspace_version(state, workspace)
         .await
         .context("failed to resolve package version")?;
@@ -730,7 +742,7 @@ mod tests {
         let pkg = "test-package@0.1.0".parse()?;
 
         install_package(&state, &pkg, &workspace).await?;
-        uninstall_package(&state, &pkg.name, &workspace).await?;
+        uninstall_package(&state, &pkg, &workspace).await?;
         assert!(state
             .get_workspace_package(&pkg.name, &workspace)
             .await?
@@ -739,14 +751,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_uninstall_package_refuses_if_package_is_not_installed() {
+    async fn test_uninstall_package_refuses_if_package_is_not_installed() -> Result<()> {
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg = "test-package@0.1.0";
+        let pkg = "test-package@0.1.0".parse()?;
 
-        let result = uninstall_package(&state, pkg, &workspace).await;
+        let result = uninstall_package(&state, &pkg, &workspace).await;
         assert!(result.is_err());
+        Ok(())
     }
 
     #[tokio::test]
@@ -1011,7 +1024,7 @@ mod tests {
 
         let pkg = "test-package@0.1.0".parse()?;
         install_package(&state, &pkg, &workspace).await?;
-        uninstall_package(&state, &pkg.name, &workspace).await?;
+        uninstall_package(&state, &pkg, &workspace).await?;
 
         assert!(state.get_installed_package(&pkg).await?.is_some());
         garbage_collect_installed_packages(&state).await?;
@@ -1032,7 +1045,7 @@ mod tests {
         let pkg = "test-package@0.1.0".parse()?;
 
         install_package(&state, &pkg, &workspace).await?;
-        uninstall_package(&state, &pkg.name, &workspace).await?;
+        uninstall_package(&state, &pkg, &workspace).await?;
         install_package(&state, &pkg, &workspace).await?;
 
         Ok(())
