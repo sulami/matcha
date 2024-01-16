@@ -1,6 +1,6 @@
-use std::{fmt::Display, path::PathBuf, str::FromStr};
+use std::{fmt::Display, path::PathBuf};
 
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::{Context, Result};
 use sqlx::FromRow;
 use tokio::fs::remove_dir_all;
 
@@ -15,53 +15,6 @@ pub trait PackageSpec {
     ///
     /// The version is a known good one, such as a resolved or installed one.
     fn spec(&self) -> (String, String);
-}
-
-/// A package name and maybe a version, which needs resolution in some context.
-#[derive(Clone, Debug)]
-pub struct PackageRequest {
-    /// The name of the package.
-    pub name: String,
-    /// The version of the package.
-    pub version: Option<String>,
-}
-
-impl Display for PackageRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)?;
-        if let Some(version) = &self.version {
-            write!(f, "@{}", version)?;
-        }
-        Ok(())
-    }
-}
-
-impl FromStr for PackageRequest {
-    type Err = Error;
-
-    /// Parses a package name and version from a string.
-    ///
-    /// The format is <package>[@<version>], where version defaults to "latest".
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut parts = s.splitn(2, '@');
-        let name = parts
-            .next()
-            .ok_or(anyhow!("failed to parse package name"))?;
-        let version = parts.next();
-        Ok(Self {
-            name: name.to_string(),
-            version: version.map(|v| v.to_string()),
-        })
-    }
-}
-
-impl From<Package> for PackageRequest {
-    fn from(pkg: Package) -> Self {
-        Self {
-            name: pkg.name,
-            version: Some(pkg.version),
-        }
-    }
 }
 
 /// Returns the first version in `haystack` that starts with `needle`.
@@ -272,45 +225,6 @@ impl From<Package> for InstalledPackage {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_package() {
-        let pkg: PackageRequest = "foo".parse().unwrap();
-        assert_eq!(pkg.name, "foo");
-        assert_eq!(pkg.version, None);
-
-        let pkg: PackageRequest = "foo@latest".parse().unwrap();
-        assert_eq!(pkg.name, "foo");
-        assert_eq!(pkg.version, Some("latest".to_string()));
-
-        let pkg: PackageRequest = "foo@1.2.3".parse().unwrap();
-        assert_eq!(pkg.name, "foo");
-        assert_eq!(pkg.version, Some("1.2.3".to_string()));
-    }
-
-    #[test]
-    fn test_display() {
-        let pkg: PackageRequest = "foo".parse().unwrap();
-        assert_eq!(pkg.to_string(), "foo");
-
-        let pkg: PackageRequest = "foo@latest".parse().unwrap();
-        assert_eq!(pkg.to_string(), "foo@latest");
-
-        let pkg: PackageRequest = "foo@1.2.3".parse().unwrap();
-        assert_eq!(pkg.to_string(), "foo@1.2.3");
-    }
-
-    #[test]
-    fn test_from_manifest_package() {
-        let pkg: PackageRequest = crate::manifest::Package {
-            name: "foo".to_string(),
-            version: "1.2.3".to_string(),
-            ..Default::default()
-        }
-        .into();
-        assert_eq!(pkg.name, "foo");
-        assert_eq!(pkg.version, Some("1.2.3".to_string()));
-    }
 
     #[test]
     fn test_find_matching_version() {

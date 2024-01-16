@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 
 use crate::{
     error::{Conflicts, InvalidVersonSpec},
-    package::{KnownPackageSpec, PackageRequest, PackageSpec, WorkspacePackageSpec},
+    package::{KnownPackageSpec, PackageSpec, WorkspacePackageSpec},
     state::State,
     workspace::Workspace,
 };
@@ -187,18 +187,6 @@ impl FromStr for DependencyRequest {
             name: name.into(),
             version: version.parse()?,
         })
-    }
-}
-
-impl From<PackageRequest> for DependencyRequest {
-    fn from(value: PackageRequest) -> Self {
-        Self {
-            name: value.name,
-            version: match value.version {
-                Some(v) => v.parse().expect("invalid version spec"),
-                None => VersionSpec::Any,
-            },
-        }
     }
 }
 
