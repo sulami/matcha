@@ -144,8 +144,8 @@ impl Package {
 }
 
 impl PackageSpec for Package {
-    fn spec(&self) -> (&str, &str) {
-        (&self.name, &self.version)
+    fn spec(&self) -> (String, String) {
+        (self.name.clone(), self.version.clone())
     }
 }
 

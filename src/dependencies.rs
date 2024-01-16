@@ -1,4 +1,78 @@
-use std::{collections::HashSet, fmt::Display, ops::BitAnd, str::FromStr};
+use std::{fmt::Display, ops::BitAnd, str::FromStr};
+
+use anyhow::{anyhow, Result};
+
+use crate::{
+    error::{Conflicts, InvalidVersonSpec},
+    package::{KnownPackageSpec, PackageRequest, PackageSpec, WorkspacePackageSpec},
+    state::State,
+};
+
+/// A set of changes to workspace packages.
+#[derive(Debug, Default)]
+pub struct PackageChangeSet {
+    /// Packages that need to be added.
+    add: Vec<DependencyRequest>,
+    /// Packages that need to be upgraded or downgraded.
+    grade: Vec<DependencyRequest>,
+    /// Packages that need to be removed.
+    remove: Vec<DependencyRequest>,
+}
+
+impl PackageChangeSet {
+    /// Creates a changeset that adds the given packages.
+    pub fn add_packages(
+        pkgs: &[DependencyRequest],
+        workspace_packages: &[WorkspacePackageSpec],
+    ) -> Result<Self> {
+        let mut change_set = Self {
+            add: Vec::from(pkgs),
+            ..Self::default()
+        };
+
+        change_set.resolve(workspace_packages)?;
+
+        Ok(change_set)
+    }
+
+    pub fn added_packages(&self) -> Vec<DependencyRequest> {
+        self.add.clone()
+    }
+
+    /// Resolves the changeset based on the current workflow packages.
+    fn resolve(&mut self, current: &[WorkspacePackageSpec]) -> Result<()> {
+        // Get all the requests currently in the workspace.
+        let current_requests = current
+            .iter()
+            .map(|p| p.to_owned().into())
+            .collect::<Vec<DependencyRequest>>();
+
+        // Merge the current requests with the new requests.
+        let merged_requests =
+            merge_dependency_requests(current_requests.into_iter().chain(self.add.clone()))?;
+
+        // TODO: This does not handle removals yet.
+
+        for request in merged_requests {
+            if let Some(existing) = current.iter().find(|p| p.name == request.name) {
+                // The request matches a currently included package.
+                if request.version.matches(&existing.version) {
+                    // The currently included package satisfies the request, do nothing.
+                    continue;
+                }
+                // The currently included package does not satisfy the request, add it to the
+                // grade list to be upgraded or downgraded.
+                self.grade.push(request);
+            } else {
+                // The request does not match a currently included package, add it to the add list
+                // to be installed.
+                self.add.push(request);
+            }
+        }
+
+        Ok(())
+    }
+}
 
 /// A dependency of a package, with an unresolved version.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -7,6 +81,79 @@ pub struct DependencyRequest {
     pub name: String,
     /// The version of the dependency.
     pub version: VersionSpec,
+}
+
+impl DependencyRequest {
+    /// If the version isn't fully qualified, resolves it to the latest known one.
+    ///
+    /// Returns an error if the package is not known.
+    /// If multiple versions of the package are known, the first (latest) one that matches is used.
+    pub async fn resolve_known_version(&self, state: &State) -> Result<KnownPackageSpec> {
+        let known_versions = state.known_package_versions(&self.name).await?;
+
+        if known_versions.is_empty() {
+            return Err(anyhow!("package {} is not known", self.name));
+        }
+
+        let Some(resolved) = known_versions.iter().find(|v| self.version.matches(v)) else {
+            return Err(anyhow!(
+                "package {} is not known, but these versions are: {}",
+                self,
+                known_versions.join(", ")
+            ));
+        };
+
+        Ok(KnownPackageSpec::from_dependency_request(self, resolved))
+    }
+}
+
+impl FromStr for DependencyRequest {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut parts = s.splitn(2, '@');
+        let Some(name) = parts.next() else {
+            anyhow::bail!("invalid dependency request: {}", s);
+        };
+        let version = parts.next().unwrap_or("*");
+        Ok(Self {
+            name: name.into(),
+            version: version.parse()?,
+        })
+    }
+}
+
+impl From<PackageRequest> for DependencyRequest {
+    fn from(value: PackageRequest) -> Self {
+        Self {
+            name: value.name,
+            version: match value.version {
+                Some(v) => v.parse().expect("invalid version spec"),
+                None => VersionSpec::Any,
+            },
+        }
+    }
+}
+
+impl From<WorkspacePackageSpec> for DependencyRequest {
+    fn from(value: WorkspacePackageSpec) -> Self {
+        Self {
+            name: value.name,
+            version: value.version.parse().expect("invalid version spec"),
+        }
+    }
+}
+
+impl Display for DependencyRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.version)
+    }
+}
+
+impl PackageSpec for DependencyRequest {
+    fn spec(&self) -> (String, String) {
+        (self.name.clone(), self.version.to_string())
+    }
 }
 
 /// A version spec, which can be used to resolve to a concrete version.
@@ -59,6 +206,22 @@ impl VersionSpec {
     }
 }
 
+impl Display for VersionSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VersionSpec::Any => write!(f, "*"),
+            VersionSpec::Exact(version) => write!(f, "{}", version),
+            VersionSpec::Partial(prefix) => write!(f, "~{}", prefix),
+        }
+    }
+}
+
+impl Default for VersionSpec {
+    fn default() -> Self {
+        VersionSpec::Any
+    }
+}
+
 impl BitAnd for VersionSpec {
     type Output = Option<Self>;
 
@@ -82,7 +245,7 @@ impl BitAnd for VersionSpec {
 }
 
 impl FromStr for VersionSpec {
-    type Err = ();
+    type Err = InvalidVersonSpec;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "*" {
@@ -95,48 +258,10 @@ impl FromStr for VersionSpec {
     }
 }
 
-/// Conflicts between dependency requests.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Conflicts {
-    /// The conflicting dependency requests.
-    inner: Vec<(String, HashSet<VersionSpec>)>,
-}
-
-impl Conflicts {
-    /// Adds a conflict.
-    fn add_conflict(&mut self, name: String, a: VersionSpec, b: VersionSpec) {
-        if let Some((_, versions)) = self.inner.iter_mut().find(|(n, _)| n == &name) {
-            versions.insert(a);
-            versions.insert(b);
-        } else {
-            self.inner.push((name, HashSet::from([a, b])));
-        }
-    }
-
-    /// Returns true if there are no conflicts.
-    fn is_empty(&self) -> bool {
-        self.inner.is_empty()
-    }
-}
-
-impl Display for Conflicts {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (name, requests) in &self.inner {
-            writeln!(f, "conflicting requests for dependency '{}':", name)?;
-            for request in requests {
-                writeln!(f, "  {:?}", request)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for Conflicts {}
-
 /// Attempts to merge a set of dependency requests in such a way that each dependency is only
 /// present once, and the version spec for each dependency is the intersection of all the version
 /// specs for that dependency.
-pub fn merge_dependency_requests(
+fn merge_dependency_requests(
     requests: impl IntoIterator<Item = DependencyRequest>,
 ) -> Result<Vec<DependencyRequest>, Conflicts> {
     let mut rv: Vec<DependencyRequest> = Vec::new();
@@ -172,6 +297,8 @@ pub fn merge_dependency_requests(
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashSet;
+
     use anyhow::Result;
 
     use super::*;

@@ -2,6 +2,7 @@ use std::{env::var, ops::Deref, path::PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use dependencies::{DependencyRequest, PackageChangeSet};
 use manifest::InstallLog;
 use once_cell::sync::OnceCell;
 use shellexpand::tilde;
@@ -9,6 +10,7 @@ use tokio::task::JoinSet;
 
 pub(crate) mod dependencies;
 pub(crate) mod download;
+pub(crate) mod error;
 pub(crate) mod manifest;
 pub(crate) mod package;
 pub(crate) mod registry;
@@ -51,13 +53,20 @@ async fn main() -> Result<()> {
     match args.command {
         Command::Package(cmd) => match cmd {
             PackageCommand::Install { pkgs, workspace } => {
+                let pkg_reqs: Vec<DependencyRequest> = pkgs
+                    .into_iter()
+                    .map(|pkg| pkg.parse::<DependencyRequest>())
+                    .collect::<Result<Vec<_>>>()?;
+
                 let workspace = get_create_workspace(&state, &workspace).await?;
                 ensure_registries_are_current(&state, &DefaultFetcher, false).await?;
 
-                let pb = create_progress_bar("Installing packages", pkgs.len() as u64);
+                let workspace_packages = state.workspace_packages(&workspace).await?;
+                let changeset = PackageChangeSet::add_packages(&pkg_reqs, &workspace_packages)?;
+
                 let mut set = JoinSet::new();
 
-                for pkg in pkgs {
+                for pkg in changeset.added_packages() {
                     let state = state.clone();
                     let workspace = workspace.clone();
                     set.spawn(async move { install_package(&state, &pkg, &workspace).await });
@@ -65,10 +74,8 @@ async fn main() -> Result<()> {
 
                 let mut results = vec![];
                 while let Some(result) = set.join_next().await {
-                    pb.inc(1);
                     results.push(result?);
                 }
-                pb.finish_and_clear();
                 let logs = results.into_iter().collect::<Result<Vec<InstallLog>>>()?;
                 for log in logs {
                     if log.is_success() {
@@ -393,20 +400,28 @@ async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
 }
 
 /// Installs a package.
-async fn install_package(state: &State, pkg: &str, workspace: &Workspace) -> Result<InstallLog> {
-    let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
-    let pkg_spec: KnownPackageSpec = pkg_req
+async fn install_package(
+    state: &State,
+    pkg: &DependencyRequest,
+    workspace: &Workspace,
+) -> Result<InstallLog> {
+    // let pkg_req: PackageRequest = pkg.parse().context("failed to parse package name")?;
+    // TODO: Move resolution down below merge_dependency_requests, because an existing package
+    // might have already pulled in this package as a dependency, but have a stricter version
+    // requirement.
+    let pkg_spec: KnownPackageSpec = pkg
         .resolve_known_version(state)
         .await
         .context("failed to resolve package version")?;
 
-    if state.get_workspace_package(pkg, workspace).await?.is_some() {
-        return Err(anyhow!(
-            "package {} is already installed in workspace {}",
-            pkg,
-            &workspace
-        ));
-    }
+    // // Check if the package is already installed in the workspace.
+    // if state.get_workspace_package(pkg, workspace).await?.is_some() {
+    //     return Err(anyhow!(
+    //         "package {} is already installed in workspace {}",
+    //         pkg,
+    //         &workspace
+    //     ));
+    // }
 
     let pkg = state
         .get_known_package(&pkg_spec)
@@ -693,10 +708,9 @@ mod tests {
         let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg: PackageRequest = "test-package@0.1.0".parse()?;
-        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
+        let pkg = "test-package@0.1.0".parse()?;
 
-        install_package(&state, &pkg.name, &workspace).await?;
+        install_package(&state, &pkg, &workspace).await?;
         assert!(state
             .get_workspace_package(&pkg.name, &workspace)
             .await?
@@ -705,7 +719,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_install_package_refuses_if_package_is_already_installed() {
+    async fn test_install_package_refuses_if_package_is_already_installed() -> Result<()> {
         let package_root = TempDir::new().unwrap();
         crate::PACKAGE_ROOT
             .set(package_root.path().to_owned())
@@ -713,11 +727,12 @@ mod tests {
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg = "test-package@0.1.0";
+        let pkg = "test-package@0.1.0".parse()?;
 
-        install_package(&state, pkg, &workspace).await.unwrap();
-        let result = install_package(&state, pkg, &workspace).await;
+        install_package(&state, &pkg, &workspace).await.unwrap();
+        let result = install_package(&state, &pkg, &workspace).await;
         assert!(result.is_err());
+        Ok(())
     }
 
     #[tokio::test]
@@ -729,10 +744,9 @@ mod tests {
         let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg: PackageRequest = "test-package@0.1.0".parse()?;
-        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
+        let pkg = "test-package@0.1.0".parse()?;
 
-        install_package(&state, &pkg.name, &workspace).await?;
+        install_package(&state, &pkg, &workspace).await?;
         uninstall_package(&state, &pkg.name, &workspace).await?;
         assert!(state
             .get_workspace_package(&pkg.name, &workspace)
@@ -753,7 +767,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_packages() {
+    async fn test_list_packages() -> Result<()> {
         let package_root = TempDir::new().unwrap();
         crate::PACKAGE_ROOT
             .set(package_root.path().to_owned())
@@ -761,10 +775,11 @@ mod tests {
         let state = setup_state_with_registry().await.unwrap();
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg = "test-package@0.1.0";
+        let pkg = "test-package@0.1.0".parse()?;
 
-        install_package(&state, pkg, &workspace).await.unwrap();
+        install_package(&state, &pkg, &workspace).await.unwrap();
         list_packages(&state, &workspace).await.unwrap();
+        Ok(())
     }
 
     #[tokio::test]
@@ -892,7 +907,7 @@ mod tests {
         let (_root, workspace) = test_workspace("test").await;
 
         add_workspace(&state, &workspace.name).await?;
-        install_package(&state, "test-package@0.1.0", &workspace).await?;
+        install_package(&state, &"test-package@0.1.0".parse()?, &workspace).await?;
         remove_workspace(&state, "test").await?;
         assert!(state
             .get_workspace_package("test-package@0.1.0", &workspace)
@@ -991,10 +1006,9 @@ mod tests {
         let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg: PackageRequest = "failing-build@0.1.0".parse()?;
-        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
+        let pkg = "failing-build@0.1.0".parse()?;
 
-        let result = install_package(&state, &pkg.name, &workspace).await;
+        let result = install_package(&state, &pkg, &workspace).await;
         assert!(result.is_ok());
         assert!(state
             .get_workspace_package(&pkg.name, &workspace)
@@ -1012,9 +1026,8 @@ mod tests {
         let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg: PackageRequest = "test-package@0.1.0".parse()?;
-        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
-        install_package(&state, &pkg.name, &workspace).await?;
+        let pkg = "test-package@0.1.0".parse()?;
+        install_package(&state, &pkg, &workspace).await?;
         uninstall_package(&state, &pkg.name, &workspace).await?;
 
         assert!(state.get_installed_package(&pkg).await?.is_some());
@@ -1033,11 +1046,11 @@ mod tests {
         let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
 
-        let pkg: PackageRequest = "test-package@0.1.0".parse()?;
-        let pkg: KnownPackageSpec = pkg.resolve_known_version(&state).await?;
-        install_package(&state, &pkg.name, &workspace).await?;
+        let pkg = "test-package@0.1.0".parse()?;
+
+        install_package(&state, &pkg, &workspace).await?;
         uninstall_package(&state, &pkg.name, &workspace).await?;
-        install_package(&state, &pkg.name, &workspace).await?;
+        install_package(&state, &pkg, &workspace).await?;
 
         Ok(())
     }

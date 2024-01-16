@@ -4,14 +4,17 @@ use anyhow::{anyhow, Context, Error, Result};
 use sqlx::FromRow;
 use tokio::fs::remove_dir_all;
 
-use crate::{manifest::Package, state::State, workspace::Workspace, PACKAGE_ROOT};
+use crate::{
+    dependencies::DependencyRequest, manifest::Package, state::State, workspace::Workspace,
+    PACKAGE_ROOT,
+};
 
 /// A package specification that includes a name and a version.
 pub trait PackageSpec {
     /// Return the name and version of this package.
     ///
     /// The version is a known good one, such as a resolved or installed one.
-    fn spec(&self) -> (&str, &str);
+    fn spec(&self) -> (String, String);
 }
 
 /// A package name and maybe a version, which needs resolution in some context.
@@ -159,11 +162,19 @@ impl KnownPackageSpec {
             requested_version: pkg.version.clone(),
         }
     }
+
+    pub fn from_dependency_request(request: &DependencyRequest, version: &str) -> Self {
+        Self {
+            name: request.name.clone(),
+            version: version.to_string(),
+            requested_version: format!("{}", request.version),
+        }
+    }
 }
 
 impl PackageSpec for KnownPackageSpec {
-    fn spec(&self) -> (&str, &str) {
-        (&self.name, &self.version)
+    fn spec(&self) -> (String, String) {
+        (self.name.clone(), self.version.clone())
     }
 }
 
@@ -233,8 +244,8 @@ impl WorkspacePackageSpec {
 }
 
 impl PackageSpec for WorkspacePackageSpec {
-    fn spec(&self) -> (&str, &str) {
-        (&self.name, &self.version)
+    fn spec(&self) -> (String, String) {
+        (self.name.clone(), self.version.clone())
     }
 }
 
@@ -297,8 +308,8 @@ impl InstalledPackage {
 }
 
 impl PackageSpec for InstalledPackage {
-    fn spec(&self) -> (&str, &str) {
-        (&self.name, &self.version)
+    fn spec(&self) -> (String, String) {
+        (self.name.clone(), self.version.clone())
     }
 }
 
