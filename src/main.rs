@@ -15,14 +15,12 @@ pub(crate) mod manifest;
 pub(crate) mod package;
 pub(crate) mod registry;
 pub(crate) mod state;
-pub(crate) mod ui;
 pub(crate) mod util;
 pub(crate) mod workspace;
 
 use package::{KnownPackageSpec, PackageRequest, WorkspacePackageSpec};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
-use ui::create_progress_bar;
 use util::is_file_system_safe;
 use workspace::Workspace;
 
@@ -148,7 +146,6 @@ async fn main() -> Result<()> {
             }
             PackageCommand::Remove { pkgs, workspace } => {
                 let workspace = get_create_workspace(&state, &workspace).await?;
-                let pb = create_progress_bar("Removing packages", pkgs.len() as u64);
                 let mut set = JoinSet::new();
 
                 for pkg in pkgs {
@@ -159,10 +156,8 @@ async fn main() -> Result<()> {
 
                 let mut results = vec![];
                 while let Some(result) = set.join_next().await {
-                    pb.inc(1);
                     results.push(result?);
                 }
-                pb.finish_and_clear();
                 let output = results.into_iter().collect::<Result<Vec<String>>>()?;
                 for line in output {
                     println!("{}", line);
@@ -492,7 +487,6 @@ async fn uninstall_package(state: &State, pkg: &str, workspace: &Workspace) -> R
 async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
     let packages = state.unused_installed_packages().await?;
     let count = packages.len() as u64;
-    let pb = create_progress_bar("Garbage collecting packages", count);
     let mut set = JoinSet::new();
 
     for package in packages {
@@ -509,11 +503,9 @@ async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
 
     let mut results = vec![];
     while let Some(result) = set.join_next().await {
-        pb.inc(1);
         results.push(result?);
     }
 
-    pb.finish_and_clear();
     results
         .into_iter()
         .collect::<Result<()>>()
@@ -573,7 +565,6 @@ async fn ensure_registries_are_current(
 ) -> Result<()> {
     let registries = state.registries().await?;
 
-    let pb = create_progress_bar("Fetching registries", registries.len() as u64);
     let mut set = JoinSet::new();
 
     for mut registry in registries {
@@ -586,11 +577,9 @@ async fn ensure_registries_are_current(
 
     let mut results = vec![];
     while let Some(result) = set.join_next().await {
-        pb.inc(1);
         results.push(result?);
     }
 
-    pb.finish_and_clear();
     results
         .into_iter()
         .collect::<Result<()>>()
