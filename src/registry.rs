@@ -312,9 +312,10 @@ impl Default for MockFetcher {
                 [[packages]]
                 name = "test-package"
                 version = "0.1.0"
-                description = "A test package"
-                homepage = "https://example.invalid/test-package"
-                license = "MIT"
+
+                [[packages]]
+                name = "test-package"
+                version = "0.1.1"
 
                 [[packages]]
                 name = "another-package"
