@@ -46,54 +46,37 @@ async fn main() -> Result<()> {
     match args.command {
         Command::Package(cmd) => match cmd {
             PackageCommand::Install { pkgs, workspace } => {
+                fetch_registries(&state, &DefaultFetcher, false).await?;
                 install_packages(&state, &pkgs, &workspace).await?;
             }
             PackageCommand::Update { pkgs, workspace } => {
+                fetch_registries(&state, &DefaultFetcher, false).await?;
                 update_packages(&state, &pkgs, &workspace).await?;
             }
             PackageCommand::Remove { pkgs, workspace } => {
-                remove_packages(&state, &pkgs, &workspace).await?;
-            }
-            PackageCommand::List { workspace } => {
-                list_packages(&state, &workspace).await?;
+                remove_packages(&state, &pkgs, &workspace).await?
             }
             PackageCommand::Search {
                 query,
                 all_versions,
             } => {
+                fetch_registries(&state, &DefaultFetcher, false).await?;
                 search_packages(&state, &query, all_versions).await?;
             }
-            PackageCommand::GarbageCollect => {
-                garbage_collect_installed_packages(&state).await?;
-            }
+            PackageCommand::List { workspace } => list_packages(&state, &workspace).await?,
+            PackageCommand::GarbageCollect => garbage_collect_installed_packages(&state).await?,
         },
         Command::Workspace(cmd) => match cmd {
-            WorkspaceCommand::Add { workspace } => {
-                add_workspace(&state, &workspace).await?;
-            }
-            WorkspaceCommand::Remove { workspace } => {
-                remove_workspace(&state, &workspace).await?;
-            }
-            WorkspaceCommand::List => {
-                list_workspaces(&state).await?;
-            }
-            WorkspaceCommand::Shell { workspace } => {
-                workspace_shell(&state, &workspace).await?;
-            }
+            WorkspaceCommand::Add { workspace } => add_workspace(&state, &workspace).await?,
+            WorkspaceCommand::Remove { workspace } => remove_workspace(&state, &workspace).await?,
+            WorkspaceCommand::List => list_workspaces(&state).await?,
+            WorkspaceCommand::Shell { workspace } => workspace_shell(&state, &workspace).await?,
         },
         Command::Registry(cmd) => match cmd {
-            RegistryCommand::Add { uri } => {
-                add_registry(&state, &uri, &DefaultFetcher).await?;
-            }
-            RegistryCommand::Remove { uri } => {
-                remove_registry(&state, &uri).await?;
-            }
-            RegistryCommand::List => {
-                list_registries(&state).await?;
-            }
-            RegistryCommand::Fetch => {
-                fetch_registries(&state, &DefaultFetcher, true).await?;
-            }
+            RegistryCommand::Add { uri } => add_registry(&state, &uri, &DefaultFetcher).await?,
+            RegistryCommand::Remove { uri } => remove_registry(&state, &uri).await?,
+            RegistryCommand::List => list_registries(&state).await?,
+            RegistryCommand::Fetch => fetch_registries(&state, &DefaultFetcher, true).await?,
         },
     }
 
