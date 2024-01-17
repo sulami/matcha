@@ -4,7 +4,7 @@ use crate::package::VersionSpec;
 
 /// An invalid version spec was encountered.
 #[derive(Debug, Clone)]
-pub struct InvalidVersonSpec(String);
+pub struct InvalidVersonSpec(pub String);
 impl Error for InvalidVersonSpec {}
 impl Display for InvalidVersonSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

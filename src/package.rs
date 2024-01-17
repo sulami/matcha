@@ -1,6 +1,7 @@
 use std::{fmt::Display, ops::BitAnd, path::PathBuf, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
+
 use sqlx::FromRow;
 use tokio::fs::remove_dir_all;
 
@@ -35,7 +36,7 @@ impl PackageChangeSet {
     /// Creates a changeset that adds the given packages.
     pub fn add_packages(
         pkgs: &[PackageRequest],
-        workspace_packages: &[WorkspacePackageSpec],
+        workspace_packages: &[WorkspacePackage],
     ) -> Result<Self> {
         let mut change_set = Self {
             add: Vec::from(pkgs),
@@ -50,7 +51,7 @@ impl PackageChangeSet {
     /// Creates a changeset that updates the given packages.
     pub fn update_packages(
         pkgs: &[PackageRequest],
-        workspace_packages: &[WorkspacePackageSpec],
+        workspace_packages: &[WorkspacePackage],
     ) -> Result<Self> {
         let mut change_set = Self {
             change: Vec::from(pkgs),
@@ -65,7 +66,7 @@ impl PackageChangeSet {
     /// Creates a changeset that removes the given packages.
     pub fn remove_packages(
         pkgs: &[PackageRequest],
-        workspace_packages: &[WorkspacePackageSpec],
+        workspace_packages: &[WorkspacePackage],
     ) -> Result<Self> {
         let mut change_set = Self {
             remove: Vec::from(pkgs),
@@ -93,7 +94,7 @@ impl PackageChangeSet {
     }
 
     /// Resolves the changeset based on the current workflow packages.
-    fn resolve(&mut self, current: &[WorkspacePackageSpec]) -> Result<()> {
+    fn resolve(&mut self, current: &[WorkspacePackage]) -> Result<()> {
         // Get all the requests currently in the workspace.
         let current_requests = current
             .iter()
@@ -142,7 +143,7 @@ impl PackageRequest {
     /// If the version isn't fully qualified, resolves it to the latest known one. Returns an error
     /// if the package is not known. If multiple versions of the package are known, the first
     /// (latest) one that matches is used.
-    pub async fn resolve_known_version(&self, state: &State) -> Result<KnownPackageSpec> {
+    pub async fn resolve_known_version(&self, state: &State) -> Result<KnownPackage> {
         let known_versions = state.known_package_versions(&self.name).await?;
 
         if known_versions.is_empty() {
@@ -157,7 +158,7 @@ impl PackageRequest {
             ));
         };
 
-        Ok(KnownPackageSpec::from_request(self, resolved))
+        Ok(KnownPackage::from_request(self, resolved))
     }
 
     /// Resolves this request to a workspace package from the given workspace.
@@ -168,7 +169,7 @@ impl PackageRequest {
         &self,
         state: &State,
         workspace: &Workspace,
-    ) -> Result<WorkspacePackageSpec> {
+    ) -> Result<WorkspacePackage> {
         let Some(installed) = state.get_workspace_package(&self.name, workspace).await? else {
             return Err(anyhow!("package {} is not installed", self));
         };
@@ -181,7 +182,7 @@ impl PackageRequest {
             ));
         }
 
-        Ok(WorkspacePackageSpec::from_request(self, &installed.version))
+        Ok(WorkspacePackage::from_request(self, &installed.version))
     }
 }
 
@@ -201,8 +202,8 @@ impl FromStr for PackageRequest {
     }
 }
 
-impl From<WorkspacePackageSpec> for PackageRequest {
-    fn from(value: WorkspacePackageSpec) -> Self {
+impl From<WorkspacePackage> for PackageRequest {
+    fn from(value: WorkspacePackage) -> Self {
         Self {
             name: value.name,
             version: value.version.parse().expect("invalid version spec"),
@@ -324,6 +325,14 @@ impl FromStr for VersionSpec {
     }
 }
 
+impl TryFrom<String> for VersionSpec {
+    type Error = InvalidVersonSpec;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
 /// Attempts to merge a set of dependency requests in such a way that each dependency is only
 /// present once, and the version spec for each dependency is the intersection of all the version
 /// specs for that dependency.
@@ -363,22 +372,19 @@ fn merge_dependency_requests(
 
 /// A [`PackageRequest`] with a resolved version based on known packages.
 #[derive(Clone, Debug, FromRow)]
-pub struct KnownPackageSpec {
+pub struct KnownPackage {
     /// The name of the package.
     pub name: String,
     /// The resolved version of the package.
     pub version: String,
-    /// The unresolved version that was requested.
-    pub requested_version: String,
 }
 
-impl KnownPackageSpec {
+impl KnownPackage {
     /// Creates a new spec from a [`crate::manifest::Package`].
     pub fn from_manifest_package(pkg: &Package) -> Self {
         Self {
             name: pkg.name.clone(),
             version: pkg.version.clone(),
-            requested_version: pkg.version.clone(),
         }
     }
 
@@ -386,18 +392,17 @@ impl KnownPackageSpec {
         Self {
             name: request.name.clone(),
             version: version.to_string(),
-            requested_version: format!("{}", request.version),
         }
     }
 }
 
-impl PackageSpec for KnownPackageSpec {
+impl PackageSpec for KnownPackage {
     fn spec(&self) -> (String, String) {
         (self.name.clone(), self.version.clone())
     }
 }
 
-impl Display for KnownPackageSpec {
+impl Display for KnownPackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}@{}", self.name, self.version)
     }
@@ -405,47 +410,49 @@ impl Display for KnownPackageSpec {
 
 // Test-only crutch.
 #[cfg(test)]
-impl From<WorkspacePackageSpec> for KnownPackageSpec {
-    fn from(spec: WorkspacePackageSpec) -> Self {
+impl From<WorkspacePackage> for KnownPackage {
+    fn from(spec: WorkspacePackage) -> Self {
         Self {
             name: spec.name,
             version: spec.version,
-            requested_version: spec.requested_version,
         }
     }
 }
 
 /// A [`PackageRequest`] with a resolved version based packages in a workspace.
 #[derive(Clone, Debug, FromRow)]
-pub struct WorkspacePackageSpec {
+pub struct WorkspacePackage {
     /// The name of the package.
     pub name: String,
     /// The resolved version of the package.
     pub version: String,
     /// The unresolved version that was requested.
-    pub requested_version: String,
+    #[sqlx(try_from = "String")]
+    pub requested_version: VersionSpec,
 }
 
-impl WorkspacePackageSpec {
+impl WorkspacePackage {
     pub fn from_request(request: &PackageRequest, version: &str) -> Self {
         Self {
             name: request.name.clone(),
             version: version.to_string(),
-            requested_version: format!("{}", request.version),
+            requested_version: request.version.clone(),
         }
     }
 
     /// Returns the latest known version of this package, if it is newer than the installed one.
-    pub async fn available_update(&self, state: &State) -> Result<Option<KnownPackageSpec>> {
+    pub async fn available_update(&self, state: &State) -> Result<Option<KnownPackage>> {
         let known_versions = state.known_package_versions(&self.name).await?;
-        let Some(latest) = find_matching_version(&known_versions, &self.requested_version) else {
+        let Some(latest) = known_versions
+            .into_iter()
+            .find(|v| self.requested_version.matches(v))
+        else {
             return Ok(None);
         };
         if self.version < latest {
-            Ok(Some(KnownPackageSpec {
+            Ok(Some(KnownPackage {
                 name: self.name.clone(),
                 version: latest,
-                requested_version: self.requested_version.clone(),
             }))
         } else {
             Ok(None)
@@ -461,53 +468,30 @@ impl WorkspacePackageSpec {
     }
 }
 
-/// Returns the first version in `haystack` that starts with `needle`.
-///
-/// Considers that for e.g. semantic versioning, "1" does not match "10.0.0".
-/// If `needle` is empty, returns the first version in `haystack`.
-fn find_matching_version(haystack: &[String], needle: &str) -> Option<String> {
-    if needle.is_empty() {
-        return haystack.first().cloned();
-    }
-    haystack
-        .iter()
-        .find(|v| {
-            v.starts_with(needle)
-                && (v.len() == needle.len() || !v.as_bytes()[needle.len()].is_ascii_digit())
-        })
-        .cloned()
-}
-
-impl PackageSpec for WorkspacePackageSpec {
+impl PackageSpec for WorkspacePackage {
     fn spec(&self) -> (String, String) {
         (self.name.clone(), self.version.clone())
     }
 }
 
-impl Display for WorkspacePackageSpec {
+impl Display for WorkspacePackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "{}@{} from {}",
-            self.name,
-            self.version,
-            if self.requested_version.is_empty() {
-                "latest"
-            } else {
-                &self.requested_version
-            }
+            self.name, self.version, self.requested_version
         )
     }
 }
 
 // Test-only crutch.
 #[cfg(test)]
-impl From<KnownPackageSpec> for WorkspacePackageSpec {
-    fn from(spec: KnownPackageSpec) -> Self {
+impl From<KnownPackage> for WorkspacePackage {
+    fn from(spec: KnownPackage) -> Self {
         Self {
             name: spec.name,
             version: spec.version,
-            requested_version: spec.requested_version,
+            requested_version: VersionSpec::Any,
         }
     }
 }
@@ -548,8 +532,8 @@ impl PackageSpec for InstalledPackage {
     }
 }
 
-impl From<&WorkspacePackageSpec> for InstalledPackage {
-    fn from(spec: &WorkspacePackageSpec) -> Self {
+impl From<&WorkspacePackage> for InstalledPackage {
+    fn from(spec: &WorkspacePackage) -> Self {
         Self {
             name: spec.name.clone(),
             version: spec.version.clone(),
@@ -985,15 +969,21 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_known_version_fails_if_this_version_is_not_known() -> Result<()> {
         let state = State::load(":memory:").await?;
-        let (_root, workspace) = test_workspace("global").await;
-        let spec = KnownPackageSpec {
+        let (_root, _workspace) = test_workspace("global").await;
+        let mut registry = Registry::new("https://example.invalid/registry");
+        registry
+            .initialize(&state, &MockFetcher::default())
+            .await
+            .unwrap();
+
+        let known_package = Package {
             name: "foo".into(),
             version: "1.0.0".into(),
-            requested_version: "1.0.0".into(),
+            registry: Some("https://example.invalid/registry".into()),
+            ..Default::default()
         };
+        state.add_known_packages(&[known_package]).await?;
 
-        state.add_installed_package(&spec).await?;
-        state.add_workspace_package(&spec, &workspace).await?;
         let pkg: PackageRequest = "foo@2.0.0".parse()?;
         assert!(pkg.resolve_known_version(&state).await.is_err());
         Ok(())
@@ -1003,13 +993,16 @@ mod tests {
     async fn test_resolve_workspace_version() -> Result<()> {
         let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
-        let spec = KnownPackageSpec {
-            name: "foo".into(),
-            version: "1.0.0".into(),
-            requested_version: "1.0.0".into(),
-        };
-        state.add_installed_package(&spec).await?;
-        state.add_workspace_package(&spec, &workspace).await?;
+
+        let req = "foo@1.0.0".parse()?;
+        let known_package = KnownPackage::from_request(&req, "1.0.0");
+        let workspace_package = WorkspacePackage::from_request(&req, "1.0.0");
+
+        state.add_installed_package(&known_package).await?;
+        state
+            .add_workspace_package(&workspace_package, &workspace)
+            .await?;
+
         let pkg: PackageRequest = "foo".parse()?;
         let spec = pkg.resolve_workspace_version(&state, &workspace).await?;
         assert_eq!(spec.version, "1.0.0");
@@ -1032,13 +1025,16 @@ mod tests {
     async fn test_resolve_workspace_version_fails_if_this_version_is_not_installed() -> Result<()> {
         let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
-        let spec = KnownPackageSpec {
-            name: "foo".into(),
-            version: "1.0.0".into(),
-            requested_version: "1.0.0".into(),
-        };
-        state.add_installed_package(&spec).await?;
-        state.add_workspace_package(&spec, &workspace).await?;
+
+        let req: PackageRequest = "foo@1".parse()?;
+        let known_package = KnownPackage::from_request(&req, "1.0.0");
+        let workspace_package = WorkspacePackage::from_request(&req, "1.0.0");
+
+        state.add_installed_package(&known_package).await?;
+
+        state
+            .add_workspace_package(&workspace_package, &workspace)
+            .await?;
         let pkg: PackageRequest = "foo@2".parse()?;
         assert!(pkg
             .resolve_workspace_version(&state, &workspace)

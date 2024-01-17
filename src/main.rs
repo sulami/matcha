@@ -16,7 +16,7 @@ pub(crate) mod util;
 pub(crate) mod workspace;
 
 use manifest::InstallLog;
-use package::{KnownPackageSpec, PackageChangeSet, PackageRequest, WorkspacePackageSpec};
+use package::{KnownPackage, PackageChangeSet, PackageRequest, WorkspacePackage};
 use registry::{DefaultFetcher, Fetcher, Registry};
 use state::State;
 use util::is_file_system_safe;
@@ -412,10 +412,10 @@ async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
 /// Installs a package.
 async fn install_package(
     state: &State,
-    pkg: &PackageRequest,
+    request: &PackageRequest,
     workspace: &Workspace,
 ) -> Result<InstallLog> {
-    let pkg_spec: KnownPackageSpec = pkg
+    let pkg_spec: KnownPackage = request
         .resolve_known_version(state)
         .await
         .context("failed to resolve package version")?;
@@ -430,8 +430,9 @@ async fn install_package(
         if log.new_install {
             state.add_installed_package(&pkg_spec).await?;
         }
+        let workspace_package = WorkspacePackage::from_request(request, &pkg.version);
         state
-            .add_workspace_package(&pkg_spec, workspace)
+            .add_workspace_package(&workspace_package, workspace)
             .await
             .context("failed to register installed package")?;
     }
@@ -476,7 +477,7 @@ async fn uninstall_package(
     pkg: &PackageRequest,
     workspace: &Workspace,
 ) -> Result<String> {
-    let pkg_spec: WorkspacePackageSpec = pkg
+    let pkg_spec: WorkspacePackage = pkg
         .resolve_workspace_version(state, workspace)
         .await
         .context("failed to resolve package version")?;

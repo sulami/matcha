@@ -1,6 +1,6 @@
 use std::{path::Path, str::FromStr};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use sqlx::{
     migrate,
     sqlite::{Sqlite, SqliteConnectOptions, SqlitePool},
@@ -9,7 +9,7 @@ use tokio::fs::create_dir_all;
 
 use crate::{
     manifest::Package,
-    package::{InstalledPackage, KnownPackageSpec, PackageSpec, WorkspacePackageSpec},
+    package::{InstalledPackage, PackageSpec, WorkspacePackage},
     registry::Registry,
     workspace::Workspace,
 };
@@ -107,10 +107,7 @@ impl State {
     }
 
     /// Returns all installed packages.
-    pub async fn workspace_packages(
-        &self,
-        workspace: &Workspace,
-    ) -> Result<Vec<WorkspacePackageSpec>> {
+    pub async fn workspace_packages(&self, workspace: &Workspace) -> Result<Vec<WorkspacePackage>> {
         let packages = sqlx::query_as("SELECT * FROM workspace_packages WHERE workspace = $1")
             .bind(&workspace.name)
             .fetch_all(&self.db)
@@ -149,7 +146,7 @@ impl State {
     /// Adds a workspace package to the internal state.
     pub async fn add_workspace_package(
         &self,
-        pkg: &KnownPackageSpec,
+        pkg: &WorkspacePackage,
         workspace: &Workspace,
     ) -> Result<()> {
         sqlx::query(
@@ -157,7 +154,7 @@ impl State {
         )
         .bind(&pkg.name)
         .bind(&pkg.version)
-        .bind(&pkg.requested_version)
+        .bind(&format!("{}", pkg.requested_version))
         .bind(&workspace.name)
         .execute(&self.db)
         .await
@@ -213,7 +210,7 @@ impl State {
         &self,
         name: &str,
         workspace: &Workspace,
-    ) -> Result<Option<WorkspacePackageSpec>> {
+    ) -> Result<Option<WorkspacePackage>> {
         let exists =
             sqlx::query_as("SELECT * FROM workspace_packages WHERE name = $1 AND workspace = $2")
                 .bind(name)
@@ -307,9 +304,7 @@ impl State {
     pub async fn add_known_packages(&self, pkgs: &[Package]) -> Result<()> {
         // TODO: We might actually be overwriting another registry's packages. Don't do that.
         if pkgs.iter().any(|p| !p.is_tied_to_registry()) {
-            return Err(anyhow!(
-                "known packages must be tied to a registry; this is a bug"
-            ));
+            bail!("known packages must be tied to a registry; this is a bug");
         }
         for pkg in pkgs {
             sqlx::query(
@@ -458,7 +453,11 @@ mod tests {
 
     use time::OffsetDateTime;
 
-    use crate::{registry::MockFetcher, workspace::test_workspace};
+    use crate::{
+        package::{KnownPackage, PackageRequest},
+        registry::MockFetcher,
+        workspace::test_workspace,
+    };
 
     /// Convenience function to setup the default test state.
     async fn setup_state_with_registry() -> Result<State> {
@@ -469,11 +468,10 @@ mod tests {
     }
 
     /// Returns a known package spec with the given name and version.
-    fn known_package(name: &str, version: &str) -> KnownPackageSpec {
-        KnownPackageSpec {
+    fn known_package(name: &str, version: &str) -> KnownPackage {
+        KnownPackage {
             name: name.to_string(),
             version: version.to_string(),
-            requested_version: version.to_string(),
         }
     }
 
@@ -481,14 +479,22 @@ mod tests {
     async fn test_workspace_package_add_list_remove() -> Result<()> {
         let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
-        let spec = known_package("test-package", "0.1.0");
-        state.add_installed_package(&spec).await?;
-        state.add_workspace_package(&spec, &workspace).await?;
+
+        let req: PackageRequest = "test-package@0.1.0".parse()?;
+        let known_package = KnownPackage::from_request(&req, "0.1.0");
+        let workspace_package = WorkspacePackage::from_request(&req, "0.1.0");
+
+        state.add_installed_package(&known_package).await?;
+        state
+            .add_workspace_package(&workspace_package, &workspace)
+            .await?;
         let packages = state.workspace_packages(&workspace).await?;
         assert_eq!(packages.len(), 1);
-        assert_eq!(packages[0].name, spec.name);
-        assert_eq!(packages[0].version, spec.version);
-        state.remove_workspace_package(&spec, &workspace).await?;
+        assert_eq!(packages[0].name, known_package.name);
+        assert_eq!(packages[0].version, known_package.version);
+        state
+            .remove_workspace_package(&known_package, &workspace)
+            .await?;
         let packages = state.workspace_packages(&workspace).await?;
         assert!(packages.is_empty());
         Ok(())
@@ -498,11 +504,17 @@ mod tests {
     async fn test_add_workspace_package_refuses_same_version_twice() -> Result<()> {
         let state = State::load(":memory:").await?;
         let (_root, workspace) = test_workspace("global").await;
-        let spec = known_package("test-package", "0.1.0");
-        state.add_installed_package(&spec).await?;
-        state.add_workspace_package(&spec, &workspace).await?;
+
+        let req: PackageRequest = "test-package@0.1.0".parse()?;
+        let known_package = KnownPackage::from_request(&req, "0.1.0");
+        let workspace_package = WorkspacePackage::from_request(&req, "0.1.0");
+
+        state.add_installed_package(&known_package).await?;
+        state
+            .add_workspace_package(&workspace_package, &workspace)
+            .await?;
         assert!(state
-            .add_workspace_package(&spec, &workspace)
+            .add_workspace_package(&workspace_package, &workspace)
             .await
             .is_err());
         Ok(())
@@ -512,15 +524,21 @@ mod tests {
     async fn test_is_workspace_package_installed() -> Result<()> {
         let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
-        let spec = known_package("test-package", "0.1.0");
-        state.add_installed_package(&spec).await?;
+
+        let req: PackageRequest = "test-package@0.1.0".parse()?;
+        let known_package = KnownPackage::from_request(&req, "0.1.0");
+        let workspace_package = WorkspacePackage::from_request(&req, "0.1.0");
+
+        state.add_installed_package(&known_package).await?;
         assert!(state
-            .get_workspace_package(&spec.name, &workspace)
+            .get_workspace_package(&req.name, &workspace)
             .await?
             .is_none());
-        state.add_workspace_package(&spec, &workspace).await?;
+        state
+            .add_workspace_package(&workspace_package, &workspace)
+            .await?;
         assert!(state
-            .get_workspace_package(&spec.name, &workspace)
+            .get_workspace_package(&req.name, &workspace)
             .await?
             .is_some());
         Ok(())
@@ -888,12 +906,20 @@ mod tests {
     async fn test_unused_installed_packages() -> Result<()> {
         let state = setup_state_with_registry().await?;
         let (_root, workspace) = test_workspace("global").await;
-        let spec = known_package("test-package", "0.1.0");
-        state.add_installed_package(&spec).await?;
+
+        let req: PackageRequest = "test-package@0.1.0".parse()?;
+        let known_package = KnownPackage::from_request(&req, "0.1.0");
+        let workspace_package = WorkspacePackage::from_request(&req, "0.1.0");
+
+        state.add_installed_package(&known_package).await?;
         assert_eq!(state.unused_installed_packages().await?.len(), 1);
-        state.add_workspace_package(&spec, &workspace).await?;
+        state
+            .add_workspace_package(&workspace_package, &workspace)
+            .await?;
         assert!(state.unused_installed_packages().await?.is_empty());
-        state.remove_workspace_package(&spec, &workspace).await?;
+        state
+            .remove_workspace_package(&workspace_package, &workspace)
+            .await?;
         assert_eq!(state.unused_installed_packages().await?.len(), 1);
         Ok(())
     }

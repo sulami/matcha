@@ -6,7 +6,7 @@ use sqlx::FromRow;
 use tokio::fs::{create_dir_all, read_dir, read_link, remove_file};
 
 use crate::{
-    package::{InstalledPackage, WorkspacePackageSpec},
+    package::{InstalledPackage, WorkspacePackage},
     WORKSPACE_ROOT,
 };
 
@@ -57,7 +57,7 @@ impl Workspace {
     }
 
     /// Removes a package's files from this workspace.
-    pub async fn remove_package(&self, pkg: &WorkspacePackageSpec) -> Result<()> {
+    pub async fn remove_package(&self, pkg: &WorkspacePackage) -> Result<()> {
         let installed_package = InstalledPackage::from(pkg);
         let pkg_dir = installed_package.directory();
 

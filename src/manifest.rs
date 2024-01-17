@@ -20,7 +20,7 @@ use url::Url;
 
 use crate::{
     download::{DefaultDownloader, Downloader},
-    package::{KnownPackageSpec, PackageSpec},
+    package::{KnownPackage, PackageSpec},
     state::State,
     workspace::Workspace,
     PACKAGE_ROOT,
@@ -186,7 +186,7 @@ impl Package {
     /// Downloads, builds, and installs the package.
     pub async fn install(&self, state: &State, workspace: &Workspace) -> Result<InstallLog> {
         if let Some(installed_package) = state
-            .get_installed_package(&KnownPackageSpec::from_manifest_package(self))
+            .get_installed_package(&KnownPackage::from_manifest_package(self))
             .await?
         {
             self.add_to_workspace(&installed_package.directory(), workspace)

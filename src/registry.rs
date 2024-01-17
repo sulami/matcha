@@ -6,7 +6,7 @@ use time::OffsetDateTime;
 use tokio::fs::read_to_string;
 
 use crate::{
-    download::download_file, manifest::Manifest, package::KnownPackageSpec, state::State,
+    download::download_file, manifest::Manifest, package::KnownPackage, state::State,
     util::is_file_system_safe,
 };
 
@@ -84,10 +84,9 @@ impl Registry {
             let mut collisions = Vec::new();
             for pkg in &manifest.packages {
                 if let Some(other) = state
-                    .get_known_package(&KnownPackageSpec {
+                    .get_known_package(&KnownPackage {
                         name: pkg.name.clone(),
                         version: pkg.version.clone(),
-                        requested_version: String::new(),
                     })
                     .await
                     .context("failed to check for pre-existing known package")?
@@ -119,10 +118,9 @@ impl Registry {
         for pkg in &know_packages {
             if !manifest.packages.contains(pkg) {
                 state
-                    .remove_known_package(&KnownPackageSpec {
+                    .remove_known_package(&KnownPackage {
                         name: pkg.name.clone(),
                         version: pkg.version.clone(),
-                        requested_version: String::new(),
                     })
                     .await?;
             }
