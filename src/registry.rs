@@ -317,6 +317,10 @@ impl Default for MockFetcher {
                 license = "MIT"
 
                 [[packages]]
+                name = "another-package"
+                version = "0.2.0"
+
+                [[packages]]
                 name = "failing-build"
                 version = "0.1.0"
                 build = "exit 1"

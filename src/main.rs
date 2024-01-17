@@ -83,9 +83,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// A peaceful package manager
+/// All the command line arguments.
 #[derive(Parser, Debug)]
-#[command(author, version, about)]
+#[command(author, version, about = "A peaceful package manager")]
 struct Cli {
     /// Command to run
     #[command(subcommand)]

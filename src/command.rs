@@ -477,7 +477,7 @@ mod tests {
     #[tokio::test]
     async fn test_install_package() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let pkg = "test-package@0.1.0".parse()?;
 
@@ -492,7 +492,7 @@ mod tests {
     #[tokio::test]
     async fn test_install_package_refuses_if_package_is_already_installed() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await.unwrap();
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let pkg = "test-package@0.1.0".parse()?;
 
@@ -505,7 +505,7 @@ mod tests {
     #[tokio::test]
     async fn test_uninstall_package() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let pkg = "test-package@0.1.0".parse()?;
 
@@ -521,7 +521,7 @@ mod tests {
     #[tokio::test]
     async fn test_uninstall_package_refuses_if_package_is_not_installed() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await.unwrap();
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let pkg = "test-package@0.1.0".parse()?;
 
@@ -533,7 +533,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_packages() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await.unwrap();
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let pkg = "test-package@0.1.0".parse()?;
 
@@ -545,7 +545,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_packages_empty() {
         let (state, _package_root) = setup_state_with_registry().await.unwrap();
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
         list_packages(&state, &workspace.name).await.unwrap();
     }
 
@@ -660,11 +660,11 @@ mod tests {
     #[tokio::test]
     async fn test_remove_workspace_with_packages() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await?;
-        let (_root, workspace) = test_workspace("test").await;
+        let (workspace, _workspace_root) = test_workspace("test").await;
 
         add_workspace(&state, &workspace.name).await?;
         install_package(&state, &"test-package@0.1.0".parse()?, &workspace).await?;
-        remove_workspace(&state, "test").await?;
+        remove_workspace(&state, &workspace.name).await?;
         assert!(state
             .get_workspace_package("test-package@0.1.0", &workspace)
             .await?
@@ -756,7 +756,7 @@ mod tests {
     #[tokio::test]
     async fn test_install_package_doesnt_add_package_to_state_if_build_failed() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let pkg = "failing-build@0.1.0".parse()?;
 
@@ -772,7 +772,7 @@ mod tests {
     #[tokio::test]
     async fn test_garbage_collect_installed_packages() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let pkg = "test-package@0.1.0".parse()?;
         install_package(&state, &pkg, &workspace).await?;
@@ -788,7 +788,7 @@ mod tests {
     #[tokio::test]
     async fn test_install_uninstall_reinstall_package() -> Result<()> {
         let (state, _package_root) = setup_state_with_registry().await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let pkg = "test-package@0.1.0".parse()?;
 
@@ -797,5 +797,34 @@ mod tests {
         install_package(&state, &pkg, &workspace).await?;
 
         Ok(())
+    }
+
+    mod integration {
+        use super::*;
+
+        #[tokio::test]
+        async fn test_install_a_package() -> Result<()> {
+            let (state, _package_root) = setup_state_with_registry().await?;
+            let (workspace, _workspace_root) = test_workspace("global").await;
+
+            let pkgs = vec!["test-package@0.1.0".to_string()];
+            install_packages(&state, &pkgs, &workspace.name).await?;
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn test_install_two_packages() -> Result<()> {
+            let (state, _package_root) = setup_state_with_registry().await?;
+            let (workspace, _workspace_root) = test_workspace("global").await;
+
+            let pkgs = vec![
+                "test-package@0.1.0".to_string(),
+                "another-package".to_string(),
+            ];
+            install_packages(&state, &pkgs, &workspace.name).await?;
+
+            Ok(())
+        }
     }
 }

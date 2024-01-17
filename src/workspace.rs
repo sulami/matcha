@@ -93,15 +93,15 @@ impl Display for Workspace {
 
 #[cfg(test)]
 /// Creates a test workspace, and also sets the workspace_root to a temporary directory.
-pub async fn test_workspace(name: &str) -> (tempfile::TempDir, Workspace) {
+pub async fn test_workspace(name: &str) -> (Workspace, tempfile::TempDir) {
     let workspace_root = tempfile::tempdir().expect("failed to create test workspace root");
     crate::WORKSPACE_ROOT
         .set(workspace_root.path().to_owned())
         .expect("failed to set workspace root");
     (
-        workspace_root,
         Workspace::new(name)
             .await
             .expect("failed to create test workspace"),
+        workspace_root,
     )
 }

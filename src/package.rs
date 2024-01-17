@@ -120,7 +120,9 @@ impl PackageChangeSet {
             } else {
                 // The request does not match a currently included package, add it to the add list
                 // to be installed.
-                self.add.push(request);
+                if !self.add.iter().any(|r| r.name == request.name) {
+                    self.add.push(request);
+                }
             }
         }
 
@@ -992,7 +994,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_workspace_version() -> Result<()> {
         let state = State::load(":memory:").await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let req = "foo@1.0.0".parse()?;
         let known_package = KnownPackage::from_request(&req, "1.0.0");
@@ -1012,7 +1014,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_workspace_version_fails_if_not_installed() -> Result<()> {
         let state = State::load(":memory:").await.unwrap();
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
         let pkg: PackageRequest = "foo".parse()?;
         assert!(pkg
             .resolve_workspace_version(&state, &workspace)
@@ -1024,7 +1026,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_workspace_version_fails_if_this_version_is_not_installed() -> Result<()> {
         let state = State::load(":memory:").await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let req: PackageRequest = "foo@1".parse()?;
         let known_package = KnownPackage::from_request(&req, "1.0.0");

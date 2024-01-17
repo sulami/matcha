@@ -478,7 +478,7 @@ mod tests {
     #[tokio::test]
     async fn test_workspace_package_add_list_remove() -> Result<()> {
         let state = State::load(":memory:").await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let req: PackageRequest = "test-package@0.1.0".parse()?;
         let known_package = KnownPackage::from_request(&req, "0.1.0");
@@ -503,7 +503,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_workspace_package_refuses_same_version_twice() -> Result<()> {
         let state = State::load(":memory:").await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let req: PackageRequest = "test-package@0.1.0".parse()?;
         let known_package = KnownPackage::from_request(&req, "0.1.0");
@@ -523,7 +523,7 @@ mod tests {
     #[tokio::test]
     async fn test_is_workspace_package_installed() -> Result<()> {
         let state = setup_state_with_registry().await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let req: PackageRequest = "test-package@0.1.0".parse()?;
         let known_package = KnownPackage::from_request(&req, "0.1.0");
@@ -800,7 +800,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_list_remove_workspace() {
         let state = State::load(":memory:").await.unwrap();
-        let (_root, workspace) = test_workspace("test").await;
+        let (workspace, _workspace_root) = test_workspace("test").await;
         state.add_workspace(&workspace).await.unwrap();
         let workspaces = state.workspaces().await.unwrap();
         assert_eq!(workspaces.len(), 2);
@@ -813,7 +813,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_workspace_refuses_same_name_twice() {
         let state = State::load(":memory:").await.unwrap();
-        let (_root, workspace) = test_workspace("test").await;
+        let (workspace, _workspace_root) = test_workspace("test").await;
         state.add_workspace(&workspace).await.unwrap();
         assert!(state.add_workspace(&workspace).await.is_err());
     }
@@ -905,7 +905,7 @@ mod tests {
     #[tokio::test]
     async fn test_unused_installed_packages() -> Result<()> {
         let state = setup_state_with_registry().await?;
-        let (_root, workspace) = test_workspace("global").await;
+        let (workspace, _workspace_root) = test_workspace("global").await;
 
         let req: PackageRequest = "test-package@0.1.0".parse()?;
         let known_package = KnownPackage::from_request(&req, "0.1.0");
