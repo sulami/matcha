@@ -1,5 +1,5 @@
 use std::{
-    fmt::Display,
+    fmt::{Debug, Display},
     path::{Path, PathBuf},
     process::Stdio,
     str::FromStr,
@@ -112,7 +112,7 @@ impl FromStr for Manifest {
 }
 
 /// A package, as described by a registry manifest.
-#[derive(Clone, Debug, PartialEq, Eq, FromRow, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, FromRow, Serialize, Deserialize, Default)]
 pub struct Package {
     /// The name of the package.
     pub name: String,
@@ -310,19 +310,25 @@ impl Package {
 
 impl Display for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.name, self.version)
+    }
+}
+
+impl Debug for Package {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}@{}", self.name, self.version)?;
         if let Some(desc) = &self.description {
-            write!(f, " - {}", desc)?;
+            write!(f, "\n  Description: {}", desc)?;
         }
         if let Some(url) = &self.homepage {
-            write!(f, " ({})", url)?;
+            write!(f, "\n  Homepage: {}", url)?;
         }
         if let Some(license) = &self.license {
-            write!(f, " [{}]", license)?;
+            write!(f, "\n  License: {}", license)?;
         }
         write!(
             f,
-            " < {}",
+            "\n  Registry: {}",
             self.registry
                 .as_ref()
                 .expect("package not tied to registry")

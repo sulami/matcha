@@ -67,6 +67,7 @@ matcha
 │ ├─update  [packages ..]
 │ ├─remove  <packages ..>
 │ ├─list
+│ ├─show    <package>
 │ └─search  <query>
 ├─workspace
 │ ├─add     <name>

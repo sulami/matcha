@@ -480,7 +480,7 @@ impl Display for WorkspacePackage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}@{} from {}",
+            "{}@{} (resolved from {})",
             self.name, self.version, self.requested_version
         )
     }

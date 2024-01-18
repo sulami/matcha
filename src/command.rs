@@ -350,6 +350,23 @@ pub async fn search_packages(state: &State, query: &str, all_versions: bool) -> 
     Ok(())
 }
 
+/// Shows information about a package.
+pub async fn show_package(state: &State, pkg: &str) -> Result<()> {
+    let pkg = pkg
+        .parse::<PackageRequest>()
+        .context("failed to parse package request")?;
+    let pkg = pkg
+        .resolve_known_version(state)
+        .await
+        .context("failed to resolve known package")?;
+    let pkg = state
+        .get_known_package(&pkg)
+        .await?
+        .ok_or_else(|| anyhow!("package not found"))?;
+    println!("{:?}", pkg);
+    Ok(())
+}
+
 /// Adds a workspace.
 pub async fn add_workspace(state: &State, name: &str) -> Result<()> {
     if !is_file_system_safe(name) {
@@ -822,6 +839,26 @@ mod tests {
             assert!(remove_packages(&state, &pkgs, &workspace.name)
                 .await
                 .is_err());
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn test_show_package() -> Result<()> {
+            let (state, _package_root) = setup_state_with_registry().await?;
+            let (_workspace, _workspace_root) = test_workspace("global").await;
+
+            show_package(&state, "test-package").await?;
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn test_show_unknown_package() -> Result<()> {
+            let (state, _package_root) = setup_state_with_registry().await?;
+            let (_workspace, _workspace_root) = test_workspace("global").await;
+
+            assert!(show_package(&state, "not-test-package").await.is_err());
 
             Ok(())
         }

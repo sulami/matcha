@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
                 fetch_registries(&state, &DefaultFetcher, false).await?;
                 search_packages(&state, &query, all_versions).await?;
             }
+            PackageCommand::Show { pkg } => show_package(&state, &pkg).await?,
             PackageCommand::List { workspace } => list_packages(&state, &workspace).await?,
             PackageCommand::GarbageCollect => garbage_collect_installed_packages(&state).await?,
         },
@@ -185,6 +186,13 @@ enum PackageCommand {
         /// Return all versions instead of just the latest
         #[arg(long)]
         all_versions: bool,
+    },
+
+    /// Show details for a package
+    Show {
+        /// Package to show
+        #[arg(required = true)]
+        pkg: String,
     },
 
     /// Garbage collect all installed packages that are not referenced by any workspace (alias: gc)
