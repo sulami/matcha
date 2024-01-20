@@ -1,0 +1,20 @@
+schema_version = 1
+name = "test"
+description = "A test manifest"
+
+[[packages]]
+name = "test-package"
+version = "0.1.0"
+
+[[packages]]
+name = "test-package"
+version = "0.1.1"
+
+[[packages]]
+name = "another-package"
+version = "0.2.0"
+
+[[packages]]
+name = "failing-build"
+version = "0.1.0"
+build = "exit 1"
