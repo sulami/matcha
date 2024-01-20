@@ -797,7 +797,25 @@ mod tests {
             install_packages(&state, &pkgs, &workspace.name).await?;
 
             let pkgs = vec!["test-package@0.1.1".to_string()];
-            assert!(install_packages(&state, &pkgs, "test").await.is_err());
+            let res = install_packages(&state, &pkgs, &workspace.name).await;
+            assert!(res
+                .unwrap_err()
+                .to_string()
+                .contains("conflicting requests"));
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn test_install_laxer_version() -> Result<()> {
+            let (state, _package_root) = setup_state_with_registry().await?;
+            let (workspace, _workspace_root) = test_workspace("global").await;
+
+            let pkgs = vec!["test-package@0.1.0".to_string()];
+            install_packages(&state, &pkgs, &workspace.name).await?;
+
+            let pkgs = vec!["test-package@~0.1".to_string()];
+            install_packages(&state, &pkgs, &workspace.name).await?;
 
             Ok(())
         }
