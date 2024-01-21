@@ -36,6 +36,7 @@ impl Default for TestSetup {
     }
 }
 
+/// Returns the path to the local test registry.
 fn local_test_registry() -> String {
     PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
         .join("tests")
@@ -89,10 +90,13 @@ async fn test_install_two_packages() -> Result<()> {
     assert!(out.status.success());
 
     let stdout = String::from_utf8(out.stdout)?;
-    assert_eq!(
-        stdout,
-        "test-package@0.1.1 (resolved from *)\nanother-package@0.2.0 (resolved from *)\n"
-    );
+    assert_eq!(stdout.lines().count(), 2);
+    assert!(stdout
+        .lines()
+        .any(|line| line == "test-package@0.1.1 (resolved from *)"));
+    assert!(stdout
+        .lines()
+        .any(|line| line == "another-package@0.2.0 (resolved from *)"));
 
     Ok(())
 }
@@ -181,7 +185,13 @@ async fn test_show_package() -> Result<()> {
     assert!(out.status.success());
 
     let stdout = String::from_utf8(out.stdout)?;
-    assert_eq!(stdout, "test-package@0.1.1\n  Registry: TODO");
+    assert_eq!(
+        stdout,
+        format!(
+            "test-package@0.1.1\n  Registry: {}\n",
+            &local_test_registry()
+        )
+    );
 
     Ok(())
 }
