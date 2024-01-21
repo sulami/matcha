@@ -4,6 +4,7 @@ use color_eyre::eyre::{eyre, Result, WrapErr};
 use shellexpand::tilde;
 use sqlx::FromRow;
 use tokio::fs::{create_dir_all, read_dir, read_link, remove_file};
+use tracing::instrument;
 
 use crate::{
     package::{InstalledPackage, WorkspacePackage},
@@ -21,6 +22,7 @@ impl Workspace {
     /// Creates a new workspace.
     ///
     /// Also ensures the workspace(/bin) directory exists.
+    #[instrument]
     pub async fn new(name: &str) -> Result<Self> {
         let ws = Self {
             name: String::from(name),
@@ -30,6 +32,7 @@ impl Workspace {
     }
 
     /// Returns the directory of the workspace.
+    #[instrument]
     pub fn directory(&self) -> Result<PathBuf> {
         let workspace_directory = WORKSPACE_ROOT
             .get()
@@ -41,6 +44,7 @@ impl Workspace {
     }
 
     /// Returns the bin directory of the workspace.
+    #[instrument]
     pub fn bin_directory(&self) -> Result<PathBuf> {
         Ok(self
             .directory()
@@ -49,6 +53,7 @@ impl Workspace {
     }
 
     /// Creates the directory for the workspace, if it doesn't exist.
+    #[instrument]
     async fn ensure_exists(&self) -> Result<()> {
         create_dir_all(self.directory()?.join("bin"))
             .await
@@ -57,6 +62,7 @@ impl Workspace {
     }
 
     /// Removes a package's files from this workspace.
+    #[instrument]
     pub async fn remove_package(&self, pkg: &WorkspacePackage) -> Result<()> {
         let installed_package = InstalledPackage::from(pkg);
         let pkg_dir = installed_package.directory();

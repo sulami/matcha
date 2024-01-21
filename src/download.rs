@@ -2,6 +2,7 @@ use bytes::Bytes;
 use color_eyre::Result;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
+use tracing::instrument;
 
 /// A trait for downloading files.
 pub trait Downloader {
@@ -31,6 +32,7 @@ impl Downloader for DefaultDownloader {
 }
 
 /// Downloads a file from a URL, and returns the bytes.
+#[instrument]
 pub async fn download_file(url: &str) -> Result<Vec<u8>> {
     let (_, mut stream) = download_stream(url).await?;
     let mut bytes = vec![];
@@ -44,6 +46,7 @@ pub async fn download_file(url: &str) -> Result<Vec<u8>> {
 }
 
 /// Downloads a file from a URL, and returns the content length and a stream of bytes.
+#[instrument]
 pub async fn download_stream(
     url: &str,
 ) -> Result<(usize, impl Stream<Item = reqwest::Result<Bytes>>)> {

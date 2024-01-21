@@ -6,6 +6,7 @@ use sqlx::{
     sqlite::{Sqlite, SqliteConnectOptions, SqlitePool},
 };
 use tokio::fs::create_dir_all;
+use tracing::instrument;
 
 use crate::{
     manifest::Package,
@@ -23,6 +24,7 @@ pub struct State {
 
 impl State {
     /// Loads the internal state database from the given path.
+    #[instrument]
     pub async fn load(path: &str) -> Result<Self> {
         let path = &shellexpand::tilde(path).to_string();
         let db = if !Path::new(path).exists() {
@@ -55,6 +57,7 @@ impl State {
     }
 
     /// Initializes the internal state database at the given path.
+    #[instrument]
     async fn init(path: &str) -> Result<SqlitePool> {
         eprintln!("No state database found, creating a new one at {}", path);
 
@@ -78,6 +81,7 @@ impl State {
     }
 
     /// Connects to the database at the given path, creating it if it doesn't exist.
+    #[instrument]
     async fn connect_db(path: &str) -> Result<SqlitePool> {
         let db =
             SqlitePool::connect_with(SqliteConnectOptions::from_str(path)?.create_if_missing(true))
@@ -107,6 +111,7 @@ impl State {
     }
 
     /// Returns all installed packages.
+    #[instrument(skip(self))]
     pub async fn workspace_packages(&self, workspace: &Workspace) -> Result<Vec<WorkspacePackage>> {
         let packages = sqlx::query_as("SELECT * FROM workspace_packages WHERE workspace = $1")
             .bind(&workspace.name)
@@ -117,6 +122,7 @@ impl State {
     }
 
     /// Adds an installed package to the internal state.
+    #[instrument(skip(self))]
     pub async fn add_installed_package(&self, pkg: &impl PackageSpec) -> Result<()> {
         let (name, version) = pkg.spec();
         sqlx::query("INSERT INTO installed_packages (name, version) VALUES ($1, $2)")
@@ -128,6 +134,8 @@ impl State {
         Ok(())
     }
 
+    /// Gets an installed package matching the spec.
+    #[instrument(skip(self))]
     pub async fn get_installed_package(
         &self,
         pkg: &impl PackageSpec,
@@ -144,6 +152,7 @@ impl State {
     }
 
     /// Adds a workspace package to the internal state.
+    #[instrument(skip(self))]
     pub async fn add_workspace_package(
         &self,
         pkg: &WorkspacePackage,
@@ -163,6 +172,7 @@ impl State {
     }
 
     /// Returns all installed packages that are not tied to a workspace.
+    #[instrument(skip(self))]
     pub async fn unused_installed_packages(&self) -> Result<Vec<InstalledPackage>> {
         let packages = sqlx::query_as(
             "SELECT * FROM installed_packages WHERE (name, version) NOT IN
@@ -175,6 +185,7 @@ impl State {
     }
 
     /// Removes an installed package from the internal state.
+    #[instrument(skip(self))]
     pub async fn remove_installed_package(&self, pkg: &impl PackageSpec) -> Result<()> {
         let (name, version) = pkg.spec();
         sqlx::query("DELETE FROM installed_packages WHERE name = $1 AND version = $2")
@@ -187,6 +198,7 @@ impl State {
     }
 
     /// Removes a workspace package from the internal state.
+    #[instrument(skip(self))]
     pub async fn remove_workspace_package(
         &self,
         pkg: &impl PackageSpec,
@@ -206,6 +218,7 @@ impl State {
     }
 
     /// Returns a workspace package matching the name, if any.
+    #[instrument(skip(self))]
     pub async fn get_workspace_package(
         &self,
         name: &str,
@@ -222,6 +235,7 @@ impl State {
     }
 
     /// Adds a registry to the internal state.
+    #[instrument(skip(self))]
     pub async fn add_registry(&self, reg: &Registry) -> Result<()> {
         if !reg.is_initialized() {
             return Err(anyhow!("registry {} is not initialized", &reg.uri));
@@ -239,6 +253,7 @@ impl State {
     }
 
     /// Removes a registry from the internal state.
+    #[instrument(skip(self))]
     pub async fn remove_registry(&self, uri: &str) -> Result<()> {
         if !self.registry_exists(uri).await? {
             return Err(anyhow!("registry {} does not exist", uri));
@@ -252,6 +267,7 @@ impl State {
     }
 
     /// Returns all registries.
+    #[instrument(skip(self))]
     pub async fn registries(&self) -> Result<Vec<Registry>> {
         let registries = sqlx::query_as("SELECT name, uri, last_fetched FROM registries")
             .fetch_all(&self.db)
@@ -261,6 +277,7 @@ impl State {
     }
 
     /// Returns true if a registry with this URI exists.
+    #[instrument(skip(self))]
     pub async fn registry_exists(&self, uri: &str) -> Result<bool> {
         let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registries WHERE uri = $1)")
             .bind(uri)
@@ -271,6 +288,7 @@ impl State {
     }
 
     /// Updates the database record of a registry with a new name and last_fetched.
+    #[instrument(skip(self))]
     pub async fn update_registry(&self, reg: &Registry) -> Result<()> {
         if !self.registry_exists(&reg.uri.to_string()).await? {
             return Err(anyhow!("registry {} does not exist", &reg.uri));
@@ -286,6 +304,7 @@ impl State {
     }
 
     /// Returns all known packages for a registry.
+    #[instrument(skip(self))]
     pub async fn known_packages_for_registry(&self, reg: &Registry) -> Result<Vec<Package>> {
         let pkgs = sqlx::query_as(
             "SELECT * FROM known_packages WHERE registry = $1 ORDER BY name ASC, version DESC",
@@ -298,6 +317,7 @@ impl State {
     }
 
     /// Adds known packages to the database.
+    #[instrument(skip(self))]
     pub async fn add_known_packages(&self, pkgs: &[Package]) -> Result<()> {
         // TODO: We might actually be overwriting another registry's packages. Don't do that.
         if pkgs.iter().any(|p| !p.is_tied_to_registry()) {
@@ -329,6 +349,7 @@ impl State {
     }
 
     /// Searches known packages for a query.
+    #[instrument(skip(self))]
     pub async fn search_known_packages(&self, query: &str) -> Result<Vec<Package>> {
         let query = format!("%{}%", query);
         let pkgs = sqlx::query_as(
@@ -347,6 +368,7 @@ impl State {
     }
 
     /// Searches know packages for a query, returning only the latest version of each package.
+    #[instrument(skip(self))]
     pub async fn search_known_packages_latest_only(&self, query: &str) -> Result<Vec<Package>> {
         let query = format!("%{}%", query);
         let pkgs = sqlx::query_as(
@@ -369,6 +391,7 @@ impl State {
     }
 
     /// Returns all versions versions of a package, ordered newest to oldest.
+    #[instrument(skip(self))]
     pub async fn known_package_versions(&self, name: &str) -> Result<Vec<String>> {
         let versions = sqlx::query_scalar(
             "SELECT version FROM known_packages WHERE name = $1 ORDER BY version DESC",
@@ -381,6 +404,7 @@ impl State {
     }
 
     /// Get the full package from a spec.
+    #[instrument(skip(self))]
     pub async fn get_known_package(&self, pkg: &impl PackageSpec) -> Result<Option<Package>> {
         let (name, version) = pkg.spec();
         let pkg = sqlx::query_as("SELECT * FROM known_packages WHERE name = $1 AND version = $2")
@@ -393,6 +417,7 @@ impl State {
     }
 
     /// Removes a known package.
+    #[instrument(skip(self))]
     pub async fn remove_known_package(&self, pkg: &impl PackageSpec) -> Result<()> {
         let (name, version) = pkg.spec();
         sqlx::query("DELETE FROM known_packages WHERE name = $1 AND version = $2")
@@ -405,6 +430,7 @@ impl State {
     }
 
     /// Adds a workspace.
+    #[instrument(skip(self))]
     pub async fn add_workspace(&self, workspace: &Workspace) -> Result<()> {
         sqlx::query("INSERT INTO workspaces (name) VALUES ($1)")
             .bind(&workspace.name)
@@ -415,6 +441,7 @@ impl State {
     }
 
     /// Removes a workspace.
+    #[instrument(skip(self))]
     pub async fn remove_workspace(&self, name: &str) -> Result<()> {
         sqlx::query("DELETE FROM workspaces WHERE name = $1")
             .bind(name)
@@ -425,6 +452,7 @@ impl State {
     }
 
     /// Gets a workspace.
+    #[instrument(skip(self))]
     pub async fn get_workspace(&self, name: &str) -> Result<Option<Workspace>> {
         let workspace = sqlx::query_as("SELECT * FROM workspaces WHERE name = $1")
             .bind(name)
@@ -435,6 +463,7 @@ impl State {
     }
 
     /// Returns all workspaces.
+    #[instrument(skip(self))]
     pub async fn workspaces(&self) -> Result<Vec<Workspace>> {
         let workspaces = sqlx::query_as("SELECT * FROM workspaces ORDER BY name ASC")
             .fetch_all(&self.db)

@@ -4,6 +4,7 @@ use color_eyre::eyre::{anyhow, Context, Result};
 use sqlx::{sqlite::SqliteRow, FromRow, Row};
 use time::OffsetDateTime;
 use tokio::fs::read_to_string;
+use tracing::instrument;
 
 use crate::{
     download::download_file, manifest::Manifest, package::KnownPackage, state::State,
@@ -51,6 +52,7 @@ impl Registry {
     }
 
     /// Do the initial fetch of the registry and write it to the database.
+    #[instrument(skip(state, fetcher))]
     pub async fn initialize(&mut self, state: &State, fetcher: &impl Fetcher) -> Result<()> {
         let manifest = self.download(fetcher).await?;
 
@@ -66,6 +68,7 @@ impl Registry {
     }
 
     /// Fetches the manifest from the registry and stores updates in the database.
+    #[instrument(skip(state, fetcher))]
     pub async fn fetch(&mut self, state: &State, fetcher: &impl Fetcher) -> Result<()> {
         let manifest = self.download(fetcher).await?;
 
@@ -144,6 +147,7 @@ impl Registry {
     }
 
     /// Fetches the manifest from the registry.
+    #[instrument(skip(fetcher))]
     async fn download(&self, fetcher: &impl Fetcher) -> Result<Manifest> {
         let s = fetcher.fetch(self).await?;
         let mut manifest: Manifest = s.parse().wrap_err("failed to parse manifest")?;
@@ -152,6 +156,7 @@ impl Registry {
     }
 
     /// Returns if the registry should be fetched.
+    #[instrument]
     pub fn should_update(&self) -> bool {
         if let Uri::File(_) = self.uri {
             return true;
@@ -260,6 +265,7 @@ pub trait Fetcher: Send + Sync + Clone {
 pub struct DefaultFetcher;
 
 impl Fetcher for DefaultFetcher {
+    #[instrument]
     async fn fetch(&self, reg: &Registry) -> Result<String> {
         let s = match &reg.uri {
             Uri::File(path) => read_to_string(path)

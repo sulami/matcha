@@ -3,6 +3,7 @@ use std::{fmt::Display, ops::BitAnd, path::PathBuf, str::FromStr};
 use color_eyre::eyre::{anyhow, Context, Result};
 use sqlx::FromRow;
 use tokio::fs::remove_dir_all;
+use tracing::instrument;
 
 use crate::{
     error::{Conflicts, InvalidVersonSpec},
@@ -13,7 +14,7 @@ use crate::{
 };
 
 /// A package specification that includes a name and a version.
-pub trait PackageSpec {
+pub trait PackageSpec: std::fmt::Debug {
     /// Return the name and version of this package.
     ///
     /// The version is a known good one, such as a resolved or installed one.
@@ -33,6 +34,7 @@ pub struct PackageChangeSet {
 
 impl PackageChangeSet {
     /// Creates a changeset that adds the given packages.
+    #[instrument]
     pub fn add_packages(
         pkgs: &[PackageRequest],
         workspace_packages: &[WorkspacePackage],
@@ -48,6 +50,7 @@ impl PackageChangeSet {
     }
 
     /// Creates a changeset that updates the given packages.
+    #[instrument]
     pub fn update_packages(
         pkgs: &[PackageRequest],
         workspace_packages: &[WorkspacePackage],
@@ -63,6 +66,7 @@ impl PackageChangeSet {
     }
 
     /// Creates a changeset that removes the given packages.
+    #[instrument]
     pub fn remove_packages(
         pkgs: &[PackageRequest],
         workspace_packages: &[WorkspacePackage],
@@ -93,6 +97,7 @@ impl PackageChangeSet {
     }
 
     /// Resolves the changeset based on the current workflow packages.
+    #[instrument]
     fn resolve(&mut self, current: &[WorkspacePackage]) -> Result<()> {
         // Get all the requests currently in the workspace.
         let current_requests = current
@@ -146,6 +151,7 @@ impl PackageRequest {
     /// If the version isn't fully qualified, resolves it to the latest known one. Returns an error
     /// if the package is not known. If multiple versions of the package are known, the first
     /// (latest) one that matches is used.
+    #[instrument(skip(state))]
     pub async fn resolve_known_version(&self, state: &State) -> Result<KnownPackage> {
         let known_versions = state.known_package_versions(&self.name).await?;
 
@@ -168,6 +174,7 @@ impl PackageRequest {
     ///
     /// If the version isn't fully qualified, resolves it to the latest installed one. Returns an
     /// error if the package is not installed in this workspace.
+    #[instrument(skip(state))]
     pub async fn resolve_workspace_version(
         &self,
         state: &State,
@@ -192,6 +199,7 @@ impl PackageRequest {
 impl FromStr for PackageRequest {
     type Err = color_eyre::eyre::Error;
 
+    #[instrument]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.splitn(2, '@');
         let Some(name) = parts.next() else {
@@ -254,6 +262,7 @@ impl VersionSpec {
     }
 
     /// Returns `true` if `version` matches this version spec.
+    #[instrument]
     fn matches(&self, version: &str) -> bool {
         match self {
             VersionSpec::Any => true,
@@ -268,6 +277,7 @@ impl VersionSpec {
 
     /// Returns `true` if `self` is compatible with `other`, in that there is at least a
     /// theoretical version that satisfies both.
+    #[instrument]
     fn is_compatible(&self, other: &Self) -> bool {
         match (self, other) {
             (VersionSpec::Any, _) => true,
@@ -295,6 +305,7 @@ impl Display for VersionSpec {
 impl BitAnd for VersionSpec {
     type Output = Option<Self>;
 
+    #[instrument]
     fn bitand(self, rhs: Self) -> Self::Output {
         if self == rhs {
             return Some(self);
@@ -317,6 +328,7 @@ impl BitAnd for VersionSpec {
 impl FromStr for VersionSpec {
     type Err = InvalidVersonSpec;
 
+    #[instrument]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s.is_empty() || s == "*" {
             return Ok(VersionSpec::Any);
@@ -339,6 +351,7 @@ impl TryFrom<String> for VersionSpec {
 /// Attempts to merge a set of dependency requests in such a way that each dependency is only
 /// present once, and the version spec for each dependency is the intersection of all the version
 /// specs for that dependency.
+#[instrument(skip(requests))]
 fn merge_dependency_requests(
     requests: impl IntoIterator<Item = PackageRequest>,
 ) -> Result<Vec<PackageRequest>, Conflicts> {
@@ -444,6 +457,7 @@ impl WorkspacePackage {
     }
 
     /// Returns the latest known version of this package, if it is newer than the installed one.
+    #[instrument(skip(state))]
     pub async fn available_update(&self, state: &State) -> Result<Option<KnownPackage>> {
         let known_versions = state.known_package_versions(&self.name).await?;
         let Some(latest) = known_versions
@@ -463,6 +477,7 @@ impl WorkspacePackage {
     }
 
     /// Removes this package's files from a workspace.
+    #[instrument]
     pub async fn remove(&self, workspace: &Workspace) -> Result<()> {
         workspace
             .remove_package(self)
@@ -522,6 +537,7 @@ impl InstalledPackage {
     }
 
     /// Deletes this package's files from the package root.
+    #[instrument]
     pub async fn delete(&self) -> Result<()> {
         let dir = self.directory();
         remove_dir_all(dir).await?;

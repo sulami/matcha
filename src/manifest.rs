@@ -16,6 +16,7 @@ use tokio::{
     pin,
     process::Command,
 };
+use tracing::instrument;
 use url::Url;
 
 use crate::{
@@ -184,6 +185,7 @@ impl InstallLog {
 
 impl Package {
     /// Downloads, builds, and installs the package.
+    #[instrument(skip(state))]
     pub async fn install(&self, state: &State, workspace: &Workspace) -> Result<InstallLog> {
         if let Some(installed_package) = state
             .get_installed_package(&KnownPackage::from_manifest_package(self))
@@ -204,6 +206,7 @@ impl Package {
     /// Downloads the package source to a temporary build directory.
     ///
     /// Returns the build directory and the name of the downloaded file.
+    #[instrument(skip(downloader))]
     async fn download_source(&self, downloader: &impl Downloader) -> Result<(TempDir, String)> {
         let build_dir = TempDir::new().wrap_err("failed to create build directory")?;
 
@@ -234,6 +237,7 @@ impl Package {
     /// Builds the package.
     ///
     /// Returns the output directory.
+    #[instrument]
     async fn build(
         &self,
         build_dir: &TempDir,
@@ -269,6 +273,7 @@ impl Package {
     /// Installs the package's build outputs to the package directory.
     ///
     /// Returns the package's directory.
+    #[instrument]
     async fn add_to_package_directory(&self, output_dir: &TempDir) -> Result<PathBuf> {
         // Create the package directory.
         let pkg_path = PACKAGE_ROOT
@@ -289,6 +294,7 @@ impl Package {
     }
 
     /// Sets up symlinks from the package directory to the workspace bin directory.
+    #[instrument]
     async fn add_to_workspace(&self, pkg_dir: &Path, workspace: &Workspace) -> Result<()> {
         let pkg_bin_path = pkg_dir.join("bin");
         let workspace_bin_path = workspace.bin_directory()?;

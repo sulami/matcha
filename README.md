@@ -81,6 +81,14 @@ matcha
   └─fetch
 ```
 
+### Word of Caution
+
+This is software is roughly in alpha state. It might try to wipe your disk. Use
+at your own peril.
+
+If investigating issues, setting `MATCHA_LOG=info` (or event `debug`) will
+provide additional info.
+
 ## How it Works
 
 First a few core concepts:

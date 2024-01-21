@@ -6,6 +6,7 @@ use std::env::var;
 
 use color_eyre::eyre::{anyhow, Context, Result};
 use tokio::task::JoinSet;
+use tracing::instrument;
 
 use crate::{
     manifest::InstallLog,
@@ -17,6 +18,7 @@ use crate::{
 };
 
 /// Installs a package.
+#[instrument(skip(state))]
 pub async fn install_packages(state: &State, pkgs: &[String], workspace_name: &str) -> Result<()> {
     let pkg_reqs: Vec<PackageRequest> = pkgs
         .iter()
@@ -60,6 +62,7 @@ pub async fn install_packages(state: &State, pkgs: &[String], workspace_name: &s
 }
 
 /// Installs a package in the given workspace.
+#[instrument(skip(state))]
 async fn install_package(
     state: &State,
     request: &PackageRequest,
@@ -91,6 +94,7 @@ async fn install_package(
 }
 
 /// Updates the given packages.
+#[instrument(skip(state))]
 pub async fn update_packages(state: &State, pkgs: &[String], workspace_name: &str) -> Result<()> {
     let workspace = get_create_workspace(state, workspace_name).await?;
 
@@ -146,6 +150,7 @@ pub async fn update_packages(state: &State, pkgs: &[String], workspace_name: &st
 }
 
 /// Updates a package.
+#[instrument(skip(state))]
 async fn update_package(
     state: &State,
     pkg: &PackageRequest,
@@ -176,6 +181,8 @@ async fn update_package(
     }
 }
 
+/// Removes the given packages from the workspace.
+#[instrument(skip(state))]
 pub async fn remove_packages(state: &State, pkgs: &[String], workspace_name: &str) -> Result<()> {
     let workspace = get_create_workspace(state, workspace_name).await?;
 
@@ -207,6 +214,7 @@ pub async fn remove_packages(state: &State, pkgs: &[String], workspace_name: &st
 }
 
 /// Removes a package from the given workspace.
+#[instrument(skip(state))]
 pub async fn remove_package(
     state: &State,
     pkg: &PackageRequest,
@@ -230,6 +238,7 @@ pub async fn remove_package(
 }
 
 /// Garbage collects all installed packages that are not referenced by any workspace.
+#[instrument(skip(state))]
 pub async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
     let packages = state.unused_installed_packages().await?;
     let count = packages.len() as u64;
@@ -262,7 +271,8 @@ pub async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
     Ok(())
 }
 
-/// Lists all installed packages.
+/// Lists all packages in the workspace.
+#[instrument(skip(state))]
 pub async fn list_packages(state: &State, workspace_name: &str) -> Result<()> {
     let workspace = get_create_workspace(state, workspace_name).await?;
     let packages = state.workspace_packages(&workspace).await?;
@@ -275,6 +285,7 @@ pub async fn list_packages(state: &State, workspace_name: &str) -> Result<()> {
 }
 
 /// Adds a registry.
+#[instrument(skip(state, fetcher))]
 pub async fn add_registry(state: &State, uri: &str, fetcher: &impl Fetcher) -> Result<()> {
     let mut registry = Registry::new(uri);
     registry.initialize(state, fetcher).await?;
@@ -284,6 +295,7 @@ pub async fn add_registry(state: &State, uri: &str, fetcher: &impl Fetcher) -> R
 }
 
 /// Removes a registry.
+#[instrument(skip(state))]
 pub async fn remove_registry(state: &State, uri: &str) -> Result<()> {
     state.remove_registry(uri).await?;
 
@@ -292,6 +304,7 @@ pub async fn remove_registry(state: &State, uri: &str) -> Result<()> {
 }
 
 /// Lists all registries.
+#[instrument(skip(state))]
 pub async fn list_registries(state: &State) -> Result<()> {
     let registries = state.registries().await?;
 
@@ -305,6 +318,7 @@ pub async fn list_registries(state: &State) -> Result<()> {
 /// Ensures all registries are up to date by potentially refetching them.
 ///
 /// Supply `force` to force a refetch of all registries.
+#[instrument(skip(state, fetcher))]
 pub async fn fetch_registries(
     state: &State,
     fetcher: &(impl Fetcher + 'static),
@@ -336,6 +350,7 @@ pub async fn fetch_registries(
 }
 
 /// Searches for a package.
+#[instrument(skip(state))]
 pub async fn search_packages(state: &State, query: &str, all_versions: bool) -> Result<()> {
     let packages = if all_versions {
         state.search_known_packages(query).await?
@@ -351,6 +366,7 @@ pub async fn search_packages(state: &State, query: &str, all_versions: bool) -> 
 }
 
 /// Shows information about a package.
+#[instrument(skip(state))]
 pub async fn show_package(state: &State, pkg: &str) -> Result<()> {
     let pkg = pkg
         .parse::<PackageRequest>()
@@ -368,6 +384,7 @@ pub async fn show_package(state: &State, pkg: &str) -> Result<()> {
 }
 
 /// Adds a workspace.
+#[instrument(skip(state))]
 pub async fn add_workspace(state: &State, name: &str) -> Result<()> {
     if !is_file_system_safe(name) {
         return Err(anyhow!("workspace names can contain [a-zA-Z0-9._-] only"));
@@ -382,6 +399,7 @@ pub async fn add_workspace(state: &State, name: &str) -> Result<()> {
 }
 
 /// Removes a workspace.
+#[instrument(skip(state))]
 pub async fn remove_workspace(state: &State, name: &str) -> Result<()> {
     if name == "global" {
         return Err(anyhow!("cannot remove global workspace"));
@@ -394,6 +412,7 @@ pub async fn remove_workspace(state: &State, name: &str) -> Result<()> {
 }
 
 /// Lists all workspaces.
+#[instrument(skip(state))]
 pub async fn list_workspaces(state: &State) -> Result<()> {
     let workspaces = state.workspaces().await?;
 
@@ -405,6 +424,7 @@ pub async fn list_workspaces(state: &State) -> Result<()> {
 }
 
 /// Runs a shell in the context of a workspace.
+#[instrument(skip(state))]
 pub async fn workspace_shell(state: &State, workspace_name: &str) -> Result<()> {
     let Some(workspace) = state.get_workspace(workspace_name).await? else {
         return Err(anyhow!("workspace {} does not exist", workspace_name));
@@ -430,6 +450,7 @@ pub async fn workspace_shell(state: &State, workspace_name: &str) -> Result<()> 
 }
 
 /// Checks if the current workspace bin dir is in $PATH, and emit a message if it isn't.
+#[instrument]
 fn check_path_for_workspace(workspace: &Workspace) {
     let path = current_path();
     let bin_dir = workspace.bin_directory().unwrap();
@@ -447,6 +468,7 @@ export PATH={0}:$PATH",
 /// Gets a workspace by name, if supplied. Otherwise defaults to the global workspace.
 ///
 /// Also ensures the directory actually exists.
+#[instrument(skip(state))]
 async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
     let name = if name.is_empty() { "global" } else { name };
     let ws = if let Some(ws) = state

@@ -4,6 +4,9 @@ use clap::Parser;
 use color_eyre::{eyre::WrapErr, Result};
 use once_cell::sync::OnceCell;
 use shellexpand::tilde;
+use tracing::instrument;
+use tracing_error::ErrorLayer;
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 pub(crate) mod command;
 pub(crate) mod download;
@@ -26,7 +29,17 @@ static WORKSPACE_ROOT: OnceCell<PathBuf> = OnceCell::new();
 static PACKAGE_ROOT: OnceCell<PathBuf> = OnceCell::new();
 
 #[tokio::main]
+#[instrument]
 async fn main() -> Result<()> {
+    tracing_subscriber::registry()
+        .with(
+            EnvFilter::try_from_env("MATCHA_LOG")
+                .or_else(|_| EnvFilter::try_new("error"))
+                .unwrap(),
+        )
+        .with(fmt::layer().with_target(false))
+        .with(ErrorLayer::default())
+        .init();
     color_eyre::install()?;
 
     let args = Cli::parse();
