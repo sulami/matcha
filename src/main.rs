@@ -1,7 +1,7 @@
 use std::{ops::Deref, path::PathBuf};
 
-use anyhow::{Context, Result};
 use clap::Parser;
+use color_eyre::{eyre::WrapErr, Result};
 use once_cell::sync::OnceCell;
 use shellexpand::tilde;
 
@@ -27,10 +27,12 @@ static PACKAGE_ROOT: OnceCell<PathBuf> = OnceCell::new();
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    color_eyre::install()?;
+
     let args = Cli::parse();
     let state = state::State::load(&args.state_db)
         .await
-        .context("Failed to load internal state")?;
+        .wrap_err("Failed to load internal state")?;
 
     WORKSPACE_ROOT
         .set(PathBuf::from(

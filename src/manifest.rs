@@ -5,7 +5,7 @@ use std::{
     str::FromStr,
 };
 
-use anyhow::{anyhow, Context, Error, Result};
+use color_eyre::eyre::{anyhow, Context, Error, Result};
 use futures_util::StreamExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::FromRow;
@@ -205,12 +205,12 @@ impl Package {
     ///
     /// Returns the build directory and the name of the downloaded file.
     async fn download_source(&self, downloader: &impl Downloader) -> Result<(TempDir, String)> {
-        let build_dir = TempDir::new().context("failed to create build directory")?;
+        let build_dir = TempDir::new().wrap_err("failed to create build directory")?;
 
         // Download the package source, if any.
         let mut download_file_name = String::new();
         if let Some(source) = &self.source {
-            let source = Url::parse(source).context("invalid source URL")?;
+            let source = Url::parse(source).wrap_err("invalid source URL")?;
 
             // Stream the download to a file.
             let (_size, download) = downloader.download_stream(source.as_str()).await?;
@@ -239,7 +239,7 @@ impl Package {
         build_dir: &TempDir,
         download_file_name: &str,
     ) -> Result<(TempDir, InstallLog)> {
-        let output_dir = TempDir::new().context("failed to create output directory")?;
+        let output_dir = TempDir::new().wrap_err("failed to create output directory")?;
         let mut log = InstallLog::new(self);
         log.new_install = true;
 
@@ -254,7 +254,7 @@ impl Package {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .context("failed to spawn build command")?
+                .wrap_err("failed to spawn build command")?
                 .wait_with_output()
                 .await?;
 
@@ -278,12 +278,12 @@ impl Package {
             .join(&self.version);
         create_dir_all(&pkg_path)
             .await
-            .context("failed to create package directory")?;
+            .wrap_err("failed to create package directory")?;
 
         // Move build outputs to the workspace/package directory.
         rename(output_dir, &pkg_path)
             .await
-            .context("failed to move build outputs into package directory")?;
+            .wrap_err("failed to move build outputs into package directory")?;
 
         Ok(pkg_path)
     }
@@ -294,7 +294,7 @@ impl Package {
         let workspace_bin_path = workspace.bin_directory()?;
         create_dir_all(workspace_bin_path.clone())
             .await
-            .context("failed to create workspace bin directory")?;
+            .wrap_err("failed to create workspace bin directory")?;
         if metadata(&pkg_bin_path).await.is_ok_and(|m| m.is_dir()) {
             let mut pkg_bin_dir_reader = read_dir(&pkg_bin_path).await?;
             while let Some(entry) = pkg_bin_dir_reader.next_entry().await? {

@@ -1,5 +1,5 @@
-use anyhow::Result;
 use bytes::Bytes;
+use color_eyre::Result;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;
 

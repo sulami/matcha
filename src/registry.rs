@@ -1,6 +1,6 @@
 use std::{fmt::Display, future::Future, path::PathBuf, str::FromStr, time::Duration};
 
-use anyhow::{anyhow, Context, Result};
+use color_eyre::eyre::{anyhow, Context, Result};
 use sqlx::{sqlite::SqliteRow, FromRow, Row};
 use time::OffsetDateTime;
 use tokio::fs::read_to_string;
@@ -89,7 +89,7 @@ impl Registry {
                         version: pkg.version.clone(),
                     })
                     .await
-                    .context("failed to check for pre-existing known package")?
+                    .wrap_err("failed to check for pre-existing known package")?
                 {
                     if other.registry.as_ref().expect("orphaned package found")
                         != &self.uri.to_string()
@@ -130,7 +130,7 @@ impl Registry {
         state
             .add_known_packages(&manifest.packages)
             .await
-            .context("failed to add new known packages")?;
+            .wrap_err("failed to add new known packages")?;
 
         // Update name if changed.
         self.name = Some(manifest.name.clone());
@@ -138,7 +138,7 @@ impl Registry {
         state
             .update_registry(self)
             .await
-            .context("failed to update registry in database")?;
+            .wrap_err("failed to update registry in database")?;
 
         Ok(())
     }
@@ -146,7 +146,7 @@ impl Registry {
     /// Fetches the manifest from the registry.
     async fn download(&self, fetcher: &impl Fetcher) -> Result<Manifest> {
         let s = fetcher.fetch(self).await?;
-        let mut manifest: Manifest = s.parse().context("failed to parse manifest")?;
+        let mut manifest: Manifest = s.parse().wrap_err("failed to parse manifest")?;
         manifest.set_registry_uri(&self.uri.to_string());
         Ok(manifest)
     }
@@ -229,7 +229,7 @@ impl From<&str> for Uri {
 }
 
 impl FromStr for Uri {
-    type Err = anyhow::Error;
+    type Err = color_eyre::eyre::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::from(s))
@@ -264,12 +264,12 @@ impl Fetcher for DefaultFetcher {
         let s = match &reg.uri {
             Uri::File(path) => read_to_string(path)
                 .await
-                .context("failed to read manifest at {path}")?,
+                .wrap_err("failed to read manifest at {path}")?,
             Uri::Http(uri) | Uri::Https(uri) => {
                 let bytes = download_file(uri)
                     .await
-                    .context("failed to fetch manifest from {uri}")?;
-                String::from_utf8(bytes).context("failed to parse downloaded manifest as utf-8")?
+                    .wrap_err("failed to fetch manifest from {uri}")?;
+                String::from_utf8(bytes).wrap_err("failed to parse downloaded manifest as utf-8")?
             }
         };
         Ok(s)

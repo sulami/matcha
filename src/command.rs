@@ -4,7 +4,7 @@
 
 use std::env::var;
 
-use anyhow::{anyhow, Context, Result};
+use color_eyre::eyre::{anyhow, Context, Result};
 use tokio::task::JoinSet;
 
 use crate::{
@@ -68,7 +68,7 @@ async fn install_package(
     let pkg_spec: KnownPackage = request
         .resolve_known_version(state)
         .await
-        .context("failed to resolve package version")?;
+        .wrap_err("failed to resolve package version")?;
 
     let pkg = state
         .get_known_package(&pkg_spec)
@@ -84,7 +84,7 @@ async fn install_package(
         state
             .add_workspace_package(&workspace_package, workspace)
             .await
-            .context("failed to register installed package")?;
+            .wrap_err("failed to register installed package")?;
     }
 
     Ok(log)
@@ -154,7 +154,7 @@ async fn update_package(
     let existing_pkg = pkg
         .resolve_workspace_version(state, workspace)
         .await
-        .context("failed to resolve package version")?;
+        .wrap_err("failed to resolve package version")?;
 
     if let Some(new_pkg) = existing_pkg.available_update(state).await? {
         // Install the new version
@@ -169,7 +169,7 @@ async fn update_package(
         state
             .remove_workspace_package(&existing_pkg, workspace)
             .await
-            .context("failed to deregister installed package")?;
+            .wrap_err("failed to deregister installed package")?;
         Ok(Some(log))
     } else {
         Ok(None)
@@ -215,16 +215,16 @@ pub async fn remove_package(
     let pkg_spec: WorkspacePackage = pkg
         .resolve_workspace_version(state, workspace)
         .await
-        .context("failed to resolve package version")?;
+        .wrap_err("failed to resolve package version")?;
 
     workspace
         .remove_package(&pkg_spec)
         .await
-        .context("failed to remove package from workspace")?;
+        .wrap_err("failed to remove package from workspace")?;
     state
         .remove_workspace_package(&pkg_spec, workspace)
         .await
-        .context("failed to deregister installed package")?;
+        .wrap_err("failed to deregister installed package")?;
 
     Ok(format!("Uninstalled {pkg_spec}"))
 }
@@ -241,7 +241,7 @@ pub async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
             package
                 .delete()
                 .await
-                .context("failed to delete unused package")?;
+                .wrap_err("failed to delete unused package")?;
             state.remove_installed_package(&package).await?;
             Ok(())
         });
@@ -255,7 +255,7 @@ pub async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
     results
         .into_iter()
         .collect::<Result<()>>()
-        .context("failed to garbage collect packages")?;
+        .wrap_err("failed to garbage collect packages")?;
 
     println!("Garbage collected {} packages", count);
 
@@ -330,7 +330,7 @@ pub async fn fetch_registries(
     results
         .into_iter()
         .collect::<Result<()>>()
-        .context("failed to update registries")?;
+        .wrap_err("failed to update registries")?;
 
     Ok(())
 }
@@ -354,11 +354,11 @@ pub async fn search_packages(state: &State, query: &str, all_versions: bool) -> 
 pub async fn show_package(state: &State, pkg: &str) -> Result<()> {
     let pkg = pkg
         .parse::<PackageRequest>()
-        .context("failed to parse package request")?;
+        .wrap_err("failed to parse package request")?;
     let pkg = pkg
         .resolve_known_version(state)
         .await
-        .context("failed to resolve known package")?;
+        .wrap_err("failed to resolve known package")?;
     let pkg = state
         .get_known_package(&pkg)
         .await?
@@ -422,7 +422,7 @@ pub async fn workspace_shell(state: &State, workspace_name: &str) -> Result<()> 
         .env("MATCHA_WORKSPACE", &workspace.name)
         .env("PATH", &patched_path)
         .spawn()
-        .context("failed to run workspace shell")?
+        .wrap_err("failed to run workspace shell")?
         .wait()
         .await?;
 
@@ -452,7 +452,7 @@ async fn get_create_workspace(state: &State, name: &str) -> Result<Workspace> {
     let ws = if let Some(ws) = state
         .get_workspace(name)
         .await
-        .context("failed to retrieve workspace")?
+        .wrap_err("failed to retrieve workspace")?
     {
         ws
     } else {

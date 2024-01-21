@@ -1,6 +1,6 @@
 use std::{fmt::Display, ops::Deref, path::PathBuf};
 
-use anyhow::{Context, Result};
+use color_eyre::eyre::{eyre, Result, WrapErr};
 use shellexpand::tilde;
 use sqlx::FromRow;
 use tokio::fs::{create_dir_all, read_dir, read_link, remove_file};
@@ -33,7 +33,7 @@ impl Workspace {
     pub fn directory(&self) -> Result<PathBuf> {
         let workspace_directory = WORKSPACE_ROOT
             .get()
-            .context("workspace directory not initialized")?;
+            .ok_or_else(|| eyre!("workspace directory not initialized"))?;
         let dir = tilde(workspace_directory.join(&self.name).to_str().unwrap())
             .deref()
             .into();
@@ -44,7 +44,7 @@ impl Workspace {
     pub fn bin_directory(&self) -> Result<PathBuf> {
         Ok(self
             .directory()
-            .context("failed to get workspace bin directory")?
+            .wrap_err("failed to get workspace bin directory")?
             .join("bin"))
     }
 
@@ -52,7 +52,7 @@ impl Workspace {
     async fn ensure_exists(&self) -> Result<()> {
         create_dir_all(self.directory()?.join("bin"))
             .await
-            .context("failed to create workspace root")?;
+            .wrap_err("failed to create workspace root")?;
         Ok(())
     }
 
@@ -69,7 +69,7 @@ impl Workspace {
             {
                 remove_file(entry.path())
                     .await
-                    .context("failed to delete package bin symlink")?;
+                    .wrap_err("failed to delete package bin symlink")?;
             }
         }
 

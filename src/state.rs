@@ -1,6 +1,6 @@
 use std::{path::Path, str::FromStr};
 
-use anyhow::{anyhow, bail, Context, Result};
+use color_eyre::eyre::{anyhow, bail, Context, Result};
 use sqlx::{
     migrate,
     sqlite::{Sqlite, SqliteConnectOptions, SqlitePool},
@@ -28,21 +28,21 @@ impl State {
         let db = if !Path::new(path).exists() {
             Self::init(path)
                 .await
-                .context("failed to initialize database")?
+                .wrap_err("failed to initialize database")?
         } else {
             Self::connect_db(path)
                 .await
-                .context("failed to connect to database")?
+                .wrap_err("failed to connect to database")?
         };
 
         let schema_version: String =
             sqlx::query_scalar("SELECT value FROM meta WHERE key = 'schema_version'")
                 .fetch_one(&db)
                 .await
-                .context("failed to fetch schema version from database")?;
+                .wrap_err("failed to fetch schema version from database")?;
         if schema_version
             .parse::<i64>()
-            .context("failed to parse database schema version")?
+            .wrap_err("failed to parse database schema version")?
             > 1
         {
             return Err(anyhow!(
@@ -63,17 +63,17 @@ impl State {
         if !dir.exists() {
             create_dir_all(dir)
                 .await
-                .context("failed to create state directory")?;
+                .wrap_err("failed to create state directory")?;
         }
 
         // Create the database schema.
         let db = Self::connect_db(path)
             .await
-            .context("failed to create new database")?;
+            .wrap_err("failed to create new database")?;
         migrate!("./migrations")
             .run(&db)
             .await
-            .context("failed to initialize database")?;
+            .wrap_err("failed to initialize database")?;
         Ok(db)
     }
 
@@ -112,7 +112,7 @@ impl State {
             .bind(&workspace.name)
             .fetch_all(&self.db)
             .await
-            .context("failed to fetch workspace packages from database")?;
+            .wrap_err("failed to fetch workspace packages from database")?;
         Ok(packages)
     }
 
@@ -124,7 +124,7 @@ impl State {
             .bind(version)
             .execute(&self.db)
             .await
-            .context("failed to insert installed package into database")?;
+            .wrap_err("failed to insert installed package into database")?;
         Ok(())
     }
 
@@ -139,7 +139,7 @@ impl State {
                 .bind(version)
                 .fetch_optional(&self.db)
                 .await
-                .context("failed to fetch installed package from database")?;
+                .wrap_err("failed to fetch installed package from database")?;
         Ok(result)
     }
 
@@ -158,7 +158,7 @@ impl State {
         .bind(&workspace.name)
         .execute(&self.db)
         .await
-        .context("failed to insert workspace package into database")?;
+        .wrap_err("failed to insert workspace package into database")?;
         Ok(())
     }
 
@@ -170,7 +170,7 @@ impl State {
         )
         .fetch_all(&self.db)
         .await
-        .context("failed to fetch unused installed packages from database")?;
+        .wrap_err("failed to fetch unused installed packages from database")?;
         Ok(packages)
     }
 
@@ -182,7 +182,7 @@ impl State {
             .bind(version)
             .execute(&self.db)
             .await
-            .context("failed to remove installed package from database")?;
+            .wrap_err("failed to remove installed package from database")?;
         Ok(())
     }
 
@@ -201,7 +201,7 @@ impl State {
         .bind(&workspace.name)
         .execute(&self.db)
         .await
-        .context("failed to remove workspace package from database")?;
+        .wrap_err("failed to remove workspace package from database")?;
         Ok(())
     }
 
@@ -217,7 +217,7 @@ impl State {
                 .bind(&workspace.name)
                 .fetch_optional(&self.db)
                 .await
-                .context("failed to check for installed workspace package")?;
+                .wrap_err("failed to check for installed workspace package")?;
         Ok(exists)
     }
 
@@ -234,7 +234,7 @@ impl State {
             .bind(reg.uri.to_string())
             .execute(&self.db)
             .await
-            .context("failed to insert registry into database")?;
+            .wrap_err("failed to insert registry into database")?;
         Ok(())
     }
 
@@ -247,7 +247,7 @@ impl State {
             .bind(uri)
             .execute(&self.db)
             .await
-            .context("failed to remove registry from database")?;
+            .wrap_err("failed to remove registry from database")?;
         Ok(())
     }
 
@@ -256,7 +256,7 @@ impl State {
         let registries = sqlx::query_as("SELECT name, uri, last_fetched FROM registries")
             .fetch_all(&self.db)
             .await
-            .context("failed to fetch registries from database")?;
+            .wrap_err("failed to fetch registries from database")?;
         Ok(registries)
     }
 
@@ -266,7 +266,7 @@ impl State {
             .bind(uri)
             .fetch_one(&self.db)
             .await
-            .context("failed to check if registry exists in database")?;
+            .wrap_err("failed to check if registry exists in database")?;
         Ok(exists)
     }
 
@@ -281,7 +281,7 @@ impl State {
             .bind(&reg.uri.to_string())
             .execute(&self.db)
             .await
-            .context("failed to update registry last_fetched in database")?;
+            .wrap_err("failed to update registry last_fetched in database")?;
         Ok(())
     }
 
@@ -293,7 +293,7 @@ impl State {
         .bind(&reg.uri.to_string())
         .fetch_all(&self.db)
         .await
-        .context("failed to fetch known packages from database")?;
+        .wrap_err("failed to fetch known packages from database")?;
         Ok(pkgs)
     }
 
@@ -323,7 +323,7 @@ impl State {
             .bind(&pkg.build)
             .execute(&self.db)
             .await
-            .context("failed to insert known package into database")?;
+            .wrap_err("failed to insert known package into database")?;
         }
         Ok(())
     }
@@ -342,7 +342,7 @@ impl State {
         .bind(&query)
         .fetch_all(&self.db)
         .await
-        .context("failed to fetch known packages from database")?;
+        .wrap_err("failed to fetch known packages from database")?;
         Ok(pkgs)
     }
 
@@ -364,7 +364,7 @@ impl State {
         .bind(&query)
         .fetch_all(&self.db)
         .await
-        .context("failed to fetch known packages from database")?;
+        .wrap_err("failed to fetch known packages from database")?;
         Ok(pkgs)
     }
 
@@ -376,7 +376,7 @@ impl State {
         .bind(name)
         .fetch_all(&self.db)
         .await
-        .context("failed to fetch known package versions from database")?;
+        .wrap_err("failed to fetch known package versions from database")?;
         Ok(versions)
     }
 
@@ -388,7 +388,7 @@ impl State {
             .bind(version)
             .fetch_optional(&self.db)
             .await
-            .context("failed to fetch known package from database")?;
+            .wrap_err("failed to fetch known package from database")?;
         Ok(pkg)
     }
 
@@ -400,7 +400,7 @@ impl State {
             .bind(version)
             .execute(&self.db)
             .await
-            .context("failed to remove known package from database")?;
+            .wrap_err("failed to remove known package from database")?;
         Ok(())
     }
 
@@ -410,7 +410,7 @@ impl State {
             .bind(&workspace.name)
             .execute(&self.db)
             .await
-            .context("failed to insert workspace into database")?;
+            .wrap_err("failed to insert workspace into database")?;
         Ok(())
     }
 
@@ -420,7 +420,7 @@ impl State {
             .bind(name)
             .execute(&self.db)
             .await
-            .context("failed to remove workspace from database")?;
+            .wrap_err("failed to remove workspace from database")?;
         Ok(())
     }
 
@@ -430,7 +430,7 @@ impl State {
             .bind(name)
             .fetch_optional(&self.db)
             .await
-            .context("failed to fetch workspace from database")?;
+            .wrap_err("failed to fetch workspace from database")?;
         Ok(workspace)
     }
 
@@ -439,7 +439,7 @@ impl State {
         let workspaces = sqlx::query_as("SELECT * FROM workspaces ORDER BY name ASC")
             .fetch_all(&self.db)
             .await
-            .context("failed to fetch workspaces from database")?;
+            .wrap_err("failed to fetch workspaces from database")?;
         Ok(workspaces)
     }
 }

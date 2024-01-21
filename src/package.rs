@@ -1,7 +1,6 @@
 use std::{fmt::Display, ops::BitAnd, path::PathBuf, str::FromStr};
 
-use anyhow::{anyhow, Context, Result};
-
+use color_eyre::eyre::{anyhow, Context, Result};
 use sqlx::FromRow;
 use tokio::fs::remove_dir_all;
 
@@ -191,14 +190,14 @@ impl PackageRequest {
 }
 
 impl FromStr for PackageRequest {
-    type Err = anyhow::Error;
+    type Err = color_eyre::eyre::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.splitn(2, '@');
         let Some(name) = parts.next() else {
-            anyhow::bail!("invalid dependency request: {}", s);
+            color_eyre::eyre::bail!("invalid dependency request: {}", s);
         };
-        let version = parts.next().unwrap_or("*");
+        let version = parts.next().unwrap_or("");
         Ok(Self {
             name: name.into(),
             version: version.parse()?,
@@ -468,7 +467,7 @@ impl WorkspacePackage {
         workspace
             .remove_package(self)
             .await
-            .context("failed to remove package from workspace")
+            .wrap_err("failed to remove package from workspace")
     }
 }
 
@@ -557,8 +556,6 @@ impl From<Package> for InstalledPackage {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
-
-    use anyhow::Result;
 
     use crate::{
         manifest::Package as ManifestPackage,

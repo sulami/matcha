@@ -3,8 +3,8 @@ use std::{
     process::{Command as StdCommand, Output, Stdio},
 };
 
-use anyhow::Result;
 use assert_cmd::prelude::*;
+use color_eyre::Result;
 use tempfile::TempDir;
 use tokio::process::Command;
 
@@ -293,13 +293,10 @@ async fn test_cannot_add_duplicate_registry() -> Result<()> {
     assert!(!out.status.success());
 
     let stderr = String::from_utf8(out.stderr)?;
-    assert_eq!(
-        stderr,
-        format!(
-            "Error: registry {} already exists\n",
-            &local_test_registry()
-        )
-    );
+    assert!(stderr.contains(&format!(
+        "registry {} already exists",
+        &local_test_registry()
+    )));
 
     Ok(())
 }
