@@ -38,14 +38,14 @@ impl PackageChangeSet {
         pkgs: &[PackageRequest],
         workspace_packages: &[WorkspacePackage],
     ) -> Result<Self> {
-        let mut change_set = Self {
+        let mut changeset = Self {
             add: Vec::from(pkgs),
             ..Self::default()
         };
 
-        change_set.resolve(workspace_packages)?;
+        changeset.resolve(workspace_packages)?;
 
-        Ok(change_set)
+        Ok(changeset)
     }
 
     /// Creates a changeset that updates the given packages.
@@ -101,9 +101,11 @@ impl PackageChangeSet {
             .map(|p| p.to_owned().into())
             .collect::<Vec<PackageRequest>>();
 
-        // Merge the current requests with the new requests.
+        // Merge the current requests with the new requests, removing the new requests from
+        // self.add because they might not actually be needed. The ones that are needed are
+        // re-added below.
         let merged_requests =
-            merge_dependency_requests(current_requests.into_iter().chain(self.add.clone()))?;
+            merge_dependency_requests(current_requests.into_iter().chain(self.add.drain(..)))?;
 
         // TODO: This does not handle removals yet.
 
@@ -317,7 +319,7 @@ impl FromStr for VersionSpec {
     type Err = InvalidVersonSpec;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "*" {
+        if s.is_empty() || s == "*" {
             return Ok(VersionSpec::Any);
         }
         if let Some(v) = s.strip_prefix('~') {
@@ -681,6 +683,7 @@ mod tests {
 
     #[test]
     fn test_parse_version_spec() {
+        assert_eq!(VersionSpec::from_str("").unwrap(), VersionSpec::Any);
         assert_eq!(VersionSpec::from_str("*").unwrap(), VersionSpec::Any);
         assert_eq!(
             VersionSpec::from_str("1.0.0").unwrap(),

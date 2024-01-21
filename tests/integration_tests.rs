@@ -121,6 +121,28 @@ async fn test_cannot_install_two_different_versions() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_install_again_doesnt_upgrade() -> Result<()> {
+    let setup = TestSetup::default();
+
+    let out = run_test_command(&setup, &["registry", "add", &local_test_registry()]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "install", "test-package@0.1.0"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "install", "test-package"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "list"]).await?;
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8(out.stdout)?;
+    assert_eq!(stdout, "test-package@0.1.0 (resolved from 0.1.0)\n");
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_install_laxer_version() -> Result<()> {
     let setup = TestSetup::default();
 
