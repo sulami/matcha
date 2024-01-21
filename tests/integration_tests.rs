@@ -263,7 +263,10 @@ async fn test_cannot_add_duplicate_registry() -> Result<()> {
     let stderr = String::from_utf8(out.stderr)?;
     assert_eq!(
         stderr,
-        format!("registry {} already exists\n", &local_test_registry())
+        format!(
+            "Error: registry {} already exists\n",
+            &local_test_registry()
+        )
     );
 
     Ok(())
@@ -368,6 +371,105 @@ async fn test_cannot_use_invalid_workspace_name() -> Result<()> {
 
     let stderr = String::from_utf8(out.stderr)?;
     assert!(stderr.contains("workspace names can contain"));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_install_different_version_in_workspace() -> Result<()> {
+    let setup = TestSetup::default();
+
+    let out = run_test_command(&setup, &["registry", "add", &local_test_registry()]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["workspace", "add", "test-workspace"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "install", "test-package@0.1.0"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(
+        &setup,
+        &[
+            "package",
+            "install",
+            "test-package@0.1.1",
+            "--workspace",
+            "test-workspace",
+        ],
+    )
+    .await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "list"]).await?;
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8(out.stdout)?;
+    assert_eq!(stdout, "test-package@0.1.0 (resolved from 0.1.0)\n");
+
+    let out = run_test_command(
+        &setup,
+        &["package", "list", "--workspace", "test-workspace"],
+    )
+    .await?;
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8(out.stdout)?;
+    assert_eq!(stdout, "test-package@0.1.1 (resolved from 0.1.1)\n");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_remove_workspace() -> Result<()> {
+    let setup = TestSetup::default();
+
+    let out = run_test_command(&setup, &["workspace", "add", "test-workspace"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["workspace", "remove", "test-workspace"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["workspace", "list"]).await?;
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8(out.stdout)?;
+    assert_eq!(stdout, "global\n");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_remove_workspace_with_packages() -> Result<()> {
+    let setup = TestSetup::default();
+
+    let out = run_test_command(&setup, &["registry", "add", &local_test_registry()]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["workspace", "add", "test-workspace"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(
+        &setup,
+        &[
+            "package",
+            "install",
+            "test-package",
+            "--workspace",
+            "test-workspace",
+        ],
+    )
+    .await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["workspace", "remove", "test-workspace"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["workspace", "list"]).await?;
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8(out.stdout)?;
+    assert_eq!(stdout, "global\n");
 
     Ok(())
 }

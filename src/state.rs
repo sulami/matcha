@@ -227,10 +227,7 @@ impl State {
             return Err(anyhow!("registry {} is not initialized", &reg.uri));
         }
         if self.registry_exists(&reg.uri.to_string()).await? {
-            return Err(anyhow!(
-                "registry {} already exists",
-                reg.name.as_ref().unwrap()
-            ));
+            return Err(anyhow!("registry {} already exists", reg.uri));
         }
         sqlx::query("INSERT INTO registries (name, uri) VALUES ($1, $2)")
             .bind(reg.name.as_ref().unwrap())

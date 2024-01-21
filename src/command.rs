@@ -609,24 +609,4 @@ mod tests {
 
         Ok(())
     }
-
-    mod integration {
-        use super::*;
-
-        #[tokio::test]
-        async fn test_install_different_version_in_workspace() -> Result<()> {
-            let (state, _package_root) = setup_state_with_registry().await?;
-            let (workspace, _workspace_root) = test_workspace("global").await;
-
-            let pkgs = vec!["test-package@0.1.0".to_string()];
-            install_packages(&state, &pkgs, &workspace.name).await?;
-
-            add_workspace(&state, "test").await?;
-
-            let pkgs = vec!["test-package@0.1.1".to_string()];
-            install_packages(&state, &pkgs, "test").await?;
-
-            Ok(())
-        }
-    }
 }
