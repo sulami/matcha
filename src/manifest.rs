@@ -3,12 +3,11 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
     str::FromStr,
-    time::Duration,
 };
 
 use color_eyre::eyre::{anyhow, Context, Error, Result};
 use futures_util::StreamExt;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::MultiProgress;
 use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::FromRow;
 use tempfile::TempDir;
@@ -25,6 +24,7 @@ use crate::{
     download::{DefaultDownloader, Downloader},
     package::{KnownPackage, PackageSpec},
     state::State,
+    util::create_spinner,
     workspace::Workspace,
     PACKAGE_ROOT,
 };
@@ -194,35 +194,32 @@ impl Package {
         workspace: &Workspace,
         mpb: &MultiProgress,
     ) -> Result<InstallLog> {
-        let pb = mpb.add(ProgressBar::new_spinner());
-        pb.enable_steady_tick(Duration::from_millis(100));
-        pb.set_style(ProgressStyle::with_template("{spinner:.green} {msg}").unwrap());
-        pb.set_message(format!("{self}: Preparing..."));
+        let spinner = create_spinner(&format!("{self}: Preparing..."), Some(mpb));
 
         if let Some(installed_package) = state
             .get_installed_package(&KnownPackage::from_manifest_package(self))
             .await?
         {
-            pb.set_message(format!("{self}: Adding to workspace..."));
+            spinner.set_message(format!("{self}: Adding to workspace..."));
             self.add_to_workspace(&installed_package.directory(), workspace)
                 .await?;
 
-            pb.finish_with_message(format!("{self}: Installed"));
+            spinner.finish_with_message(format!("{self}: Installed"));
             Ok(InstallLog::new(self))
         } else {
-            pb.set_message(format!("{self}: Downloading..."));
+            spinner.set_message(format!("{self}: Downloading..."));
             let (build_dir, download_file_name) = self.download_source(&DefaultDownloader).await?;
 
-            pb.set_message(format!("{self}: Building..."));
+            spinner.set_message(format!("{self}: Building..."));
             let (output_dir, log) = self.build(&build_dir, &download_file_name).await?;
 
-            pb.set_message(format!("{self}: Installing..."));
+            spinner.set_message(format!("{self}: Installing..."));
             let pkg_dir = self.add_to_package_directory(&output_dir).await?;
 
-            pb.set_message(format!("{self}: Adding to workspace..."));
+            spinner.set_message(format!("{self}: Adding to workspace..."));
             self.add_to_workspace(&pkg_dir, workspace).await?;
 
-            pb.finish_with_message(format!("{self}: Installed"));
+            spinner.finish_with_message(format!("{self}: Installed"));
             Ok(log)
         }
     }

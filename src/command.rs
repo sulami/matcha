@@ -2,10 +2,10 @@
 //!
 //! Anything public in this module is exposed as a command-line subcommand.
 
-use std::{env::var, time::Duration};
+use std::env::var;
 
 use color_eyre::eyre::{anyhow, Context, Result};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::MultiProgress;
 use tokio::task::JoinSet;
 use tracing::instrument;
 
@@ -14,7 +14,7 @@ use crate::{
     package::{KnownPackage, PackageChangeSet, PackageRequest, WorkspacePackage},
     registry::{Fetcher, Registry},
     state::State,
-    util::is_file_system_safe,
+    util::{create_spinner, is_file_system_safe},
     workspace::Workspace,
 };
 
@@ -202,21 +202,25 @@ pub async fn remove_packages(state: &State, pkgs: &[String], workspace_name: &st
     let changeset = PackageChangeSet::remove_packages(&pkg_reqs, &workspace_packages)?;
 
     let mut set = JoinSet::new();
+    let mpb = MultiProgress::new();
 
     for pkg in changeset.removed_packages() {
         let state = state.clone();
         let workspace = workspace.clone();
-        set.spawn(async move { remove_package(&state, &pkg, &workspace).await });
+        let mpb = mpb.clone();
+        set.spawn(async move { remove_package(&state, &pkg, &workspace, &mpb).await });
     }
 
     let mut results = vec![];
     while let Some(result) = set.join_next().await {
         results.push(result?);
     }
-    let output = results.into_iter().collect::<Result<Vec<String>>>()?;
-    for line in output {
-        println!("{}", line);
-    }
+
+    results
+        .into_iter()
+        .collect::<Result<()>>()
+        .wrap_err("failed to remove packages")?;
+
     Ok(())
 }
 
@@ -226,7 +230,10 @@ pub async fn remove_package(
     state: &State,
     pkg: &PackageRequest,
     workspace: &Workspace,
-) -> Result<String> {
+    mpb: &MultiProgress,
+) -> Result<()> {
+    let spinner = create_spinner(&format!("{pkg}: Removing package..."), Some(mpb));
+
     let pkg_spec: WorkspacePackage = pkg
         .resolve_workspace_version(state, workspace)
         .await
@@ -241,16 +248,14 @@ pub async fn remove_package(
         .await
         .wrap_err("failed to deregister installed package")?;
 
-    Ok(format!("Uninstalled {pkg_spec}"))
+    spinner.finish_with_message(format!("{pkg}: Removed package"));
+    Ok(())
 }
 
 /// Garbage collects all installed packages that are not referenced by any workspace.
 #[instrument(skip(state))]
 pub async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
-    let pb = ProgressBar::new_spinner();
-    pb.enable_steady_tick(Duration::from_millis(100));
-    pb.set_style(ProgressStyle::with_template("{spinner:.green} {msg}").unwrap());
-    pb.set_message("Garbage-collecting packages...");
+    let spinner = create_spinner("Garbage-collecting packages...", None);
 
     let packages = state.unused_installed_packages().await?;
     let count = packages.len() as u64;
@@ -278,7 +283,7 @@ pub async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
         .collect::<Result<()>>()
         .wrap_err("failed to garbage collect packages")?;
 
-    pb.finish_with_message(format!(
+    spinner.finish_with_message(format!(
         "Garbage collected {count} package{}",
         if count == 1 { "" } else { "s" }
     ));
@@ -339,10 +344,7 @@ pub async fn fetch_registries(
     fetcher: &(impl Fetcher + 'static),
     force: bool,
 ) -> Result<()> {
-    let pb = ProgressBar::new_spinner();
-    pb.enable_steady_tick(Duration::from_millis(100));
-    pb.set_style(ProgressStyle::with_template("{spinner:.green} {msg}").unwrap());
-    pb.set_message("Fetching registries...");
+    let spinner = create_spinner("Fetching registries...", None);
 
     let registries = state.registries().await?;
 
@@ -366,7 +368,7 @@ pub async fn fetch_registries(
         .collect::<Result<()>>()
         .wrap_err("failed to update registries")?;
 
-    pb.finish_and_clear();
+    spinner.finish_and_clear();
     Ok(())
 }
 
