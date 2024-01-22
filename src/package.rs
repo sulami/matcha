@@ -102,7 +102,10 @@ impl PackageChangeSet {
         // Get all the requests currently in the workspace.
         let current_requests = current
             .iter()
-            .map(|p| p.to_owned().into())
+            .map(|p| PackageRequest {
+                name: p.name.clone(),
+                version: p.requested_version.clone(),
+            })
             .collect::<Vec<PackageRequest>>();
 
         // Merge the current requests with the new requests, removing the new requests from
@@ -1058,6 +1061,100 @@ mod tests {
             .resolve_workspace_version(&state, &workspace)
             .await
             .is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_changeset_resolve_add_new_in_vacuum() -> Result<()> {
+        let changeset = PackageChangeSet::add_packages(&["foo@1.0.0".parse()?], &[])?;
+
+        let added = changeset.added_packages().collect::<Vec<_>>();
+        assert_eq!(added.len(), 1);
+        assert!(added.contains(&"foo@1.0.0".parse()?));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_changeset_resolve_add_new_with_unrelated() -> Result<()> {
+        let changeset = PackageChangeSet::add_packages(
+            &["foo@1.0.0".parse()?],
+            &[WorkspacePackage::from_request(
+                &"bar".parse::<PackageRequest>()?,
+                "1.0.0",
+            )],
+        )?;
+
+        let added = changeset.added_packages().collect::<Vec<_>>();
+        assert_eq!(added.len(), 1);
+        assert!(added.contains(&"foo@1.0.0".parse()?));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_changeset_resolve_add_new_preexisting_upgrades() -> Result<()> {
+        let changeset = PackageChangeSet::add_packages(
+            &["foo".parse()?],
+            &[WorkspacePackage::from_request(
+                &"foo@1".parse::<PackageRequest>()?,
+                "1.0.0",
+            )],
+        )?;
+
+        let changed = changeset.changed_packages().collect::<Vec<_>>();
+        assert_eq!(changed.len(), 1);
+        assert!(changed.contains(&"foo@1".parse()?));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_changeset_resolve_add_new_preexisting_conflicts() -> Result<()> {
+        let changeset = PackageChangeSet::add_packages(
+            &["foo@2".parse()?],
+            &[WorkspacePackage::from_request(
+                &"foo@1".parse::<PackageRequest>()?,
+                "1",
+            )],
+        );
+
+        assert!(changeset.unwrap_err().to_string().contains("conflict"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_changeset_resolve_add_new_preexisting_needs_change() -> Result<()> {
+        let changeset = PackageChangeSet::add_packages(
+            &["foo@2".parse()?],
+            &[WorkspacePackage::from_request(
+                &"foo".parse::<PackageRequest>()?,
+                "1",
+            )],
+        )?;
+
+        let changed = changeset.changed_packages().collect::<Vec<_>>();
+        assert_eq!(changed.len(), 1);
+        assert!(changed.contains(&"foo@2".parse()?));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_changeset_resolve_add_new_preexisting_lax_needs_change() -> Result<()> {
+        let changeset = PackageChangeSet::add_packages(
+            &["foo@1.1".parse()?],
+            &[WorkspacePackage::from_request(
+                &"foo@~1".parse::<PackageRequest>()?,
+                "1.0",
+            )],
+        )?;
+
+        let changed = changeset.changed_packages().collect::<Vec<_>>();
+        assert_eq!(changed.len(), 1);
+        assert!(changed.contains(&"foo@1.1".parse()?));
+
         Ok(())
     }
 }

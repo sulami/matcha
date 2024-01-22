@@ -162,6 +162,25 @@ async fn test_install_laxer_version() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_install_stricter_version() -> Result<()> {
+    let setup = TestSetup::default();
+
+    let out = run_test_command(&setup, &["registry", "add", &local_test_registry()]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "install", "test-package"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "install", "test-package@0.1.0"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "install", "test-package"]).await?;
+    assert!(out.status.success());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_list_installed_packages() -> Result<()> {
     let setup = TestSetup::default();
 
