@@ -2,9 +2,10 @@
 //!
 //! Anything public in this module is exposed as a command-line subcommand.
 
-use std::env::var;
+use std::{env::var, time::Duration};
 
 use color_eyre::eyre::{anyhow, Context, Result};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::task::JoinSet;
 use tracing::instrument;
 
@@ -31,11 +32,13 @@ pub async fn install_packages(state: &State, pkgs: &[String], workspace_name: &s
     let changeset = PackageChangeSet::add_packages(&pkg_reqs, &workspace_packages)?;
 
     let mut set = JoinSet::new();
+    let mpb = MultiProgress::new();
 
     for pkg in changeset.added_packages() {
         let state = state.clone();
         let workspace = workspace.clone();
-        set.spawn(async move { install_package(&state, &pkg, &workspace).await });
+        let mpb = mpb.clone();
+        set.spawn(async move { install_package(&state, &pkg, &workspace, &mpb).await });
     }
 
     // TODO: Also apply changed packages.
@@ -47,7 +50,7 @@ pub async fn install_packages(state: &State, pkgs: &[String], workspace_name: &s
     let logs = results.into_iter().collect::<Result<Vec<InstallLog>>>()?;
     for log in logs {
         if log.is_success() {
-            println!("Installed {}", log.package_name);
+            // println!("Installed {}", log.package_name);
         } else {
             println!(
                 "Failed to install {}, build exited with code {}\nSTDOUT:\n{}STDERR:\n{}",
@@ -67,6 +70,7 @@ async fn install_package(
     state: &State,
     request: &PackageRequest,
     workspace: &Workspace,
+    mpb: &MultiProgress,
 ) -> Result<InstallLog> {
     let pkg_spec: KnownPackage = request
         .resolve_known_version(state)
@@ -77,7 +81,7 @@ async fn install_package(
         .get_known_package(&pkg_spec)
         .await?
         .expect("package not found");
-    let log = pkg.install(state, workspace).await?;
+    let log = pkg.install(state, workspace, mpb).await?;
 
     if log.is_success() {
         if log.new_install {
@@ -118,11 +122,13 @@ pub async fn update_packages(state: &State, pkgs: &[String], workspace_name: &st
     let changeset = PackageChangeSet::update_packages(&pkg_reqs, &workspace_packages)?;
 
     let mut set = JoinSet::new();
+    let mpb = MultiProgress::new();
 
     for pkg in changeset.changed_packages() {
         let state = state.clone();
         let workspace = workspace.clone();
-        set.spawn(async move { update_package(&state, &pkg, &workspace).await });
+        let mpb = mpb.clone();
+        set.spawn(async move { update_package(&state, &pkg, &workspace, &mpb).await });
     }
 
     let mut results = vec![];
@@ -155,6 +161,7 @@ async fn update_package(
     state: &State,
     pkg: &PackageRequest,
     workspace: &Workspace,
+    mpb: &MultiProgress,
 ) -> Result<Option<InstallLog>> {
     let existing_pkg = pkg
         .resolve_workspace_version(state, workspace)
@@ -167,7 +174,7 @@ async fn update_package(
             .get_known_package(&new_pkg)
             .await?
             .expect("package not found")
-            .install(state, workspace)
+            .install(state, workspace, mpb)
             .await?;
         // Remove the old one
         existing_pkg.remove(workspace).await?;
@@ -240,6 +247,11 @@ pub async fn remove_package(
 /// Garbage collects all installed packages that are not referenced by any workspace.
 #[instrument(skip(state))]
 pub async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
+    let pb = ProgressBar::new_spinner();
+    pb.enable_steady_tick(Duration::from_millis(100));
+    pb.set_style(ProgressStyle::with_template("{spinner:.green} {msg}").unwrap());
+    pb.set_message("Garbage-collecting packages...");
+
     let packages = state.unused_installed_packages().await?;
     let count = packages.len() as u64;
     let mut set = JoinSet::new();
@@ -266,7 +278,10 @@ pub async fn garbage_collect_installed_packages(state: &State) -> Result<()> {
         .collect::<Result<()>>()
         .wrap_err("failed to garbage collect packages")?;
 
-    println!("Garbage collected {} packages", count);
+    pb.finish_with_message(format!(
+        "Garbage collected {count} package{}",
+        if count == 1 { "" } else { "s" }
+    ));
 
     Ok(())
 }
@@ -324,6 +339,11 @@ pub async fn fetch_registries(
     fetcher: &(impl Fetcher + 'static),
     force: bool,
 ) -> Result<()> {
+    let pb = ProgressBar::new_spinner();
+    pb.enable_steady_tick(Duration::from_millis(100));
+    pb.set_style(ProgressStyle::with_template("{spinner:.green} {msg}").unwrap());
+    pb.set_message("Fetching registries...");
+
     let registries = state.registries().await?;
 
     let mut set = JoinSet::new();
@@ -346,6 +366,7 @@ pub async fn fetch_registries(
         .collect::<Result<()>>()
         .wrap_err("failed to update registries")?;
 
+    pb.finish_and_clear();
     Ok(())
 }
 
@@ -491,42 +512,9 @@ fn current_path() -> String {
 
 #[cfg(test)]
 mod tests {
-    use tempfile::TempDir;
-
     use super::*;
 
     use crate::{registry::MockFetcher, workspace::test_workspace};
-
-    /// Convenience function to setup the default test state.
-    ///
-    /// Make sure to keep the package root in scope, otherwise it will be deleted.
-    async fn setup_state_with_registry() -> Result<(State, TempDir)> {
-        let package_root = TempDir::new().unwrap();
-        crate::PACKAGE_ROOT
-            .set(package_root.path().to_owned())
-            .unwrap();
-
-        let state = State::load(":memory:").await?;
-        let mut registry = Registry::new("https://example.invalid/registry");
-        registry.initialize(&state, &MockFetcher::default()).await?;
-        fetch_registries(&state, &MockFetcher::default(), false).await?;
-        Ok((state, package_root))
-    }
-
-    #[tokio::test]
-    async fn test_remove_workspace_with_packages() -> Result<()> {
-        let (state, _package_root) = setup_state_with_registry().await?;
-        let (workspace, _workspace_root) = test_workspace("test").await;
-
-        add_workspace(&state, &workspace.name).await?;
-        install_package(&state, &"test-package@0.1.0".parse()?, &workspace).await?;
-        remove_workspace(&state, &workspace.name).await?;
-        assert!(state
-            .get_workspace_package("test-package@0.1.0", &workspace)
-            .await?
-            .is_none());
-        Ok(())
-    }
 
     #[tokio::test]
     async fn test_update_registry_picks_up_new_packages() {
@@ -598,37 +586,5 @@ mod tests {
         let (_root, _workspace) = test_workspace("global").await;
         let result = get_create_workspace(&state, "test").await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_install_package_doesnt_add_package_to_state_if_build_failed() -> Result<()> {
-        let (state, _package_root) = setup_state_with_registry().await?;
-        let (workspace, _workspace_root) = test_workspace("global").await;
-
-        let pkg = "failing-build@0.1.0".parse()?;
-
-        let result = install_package(&state, &pkg, &workspace).await;
-        assert!(result.is_ok());
-        assert!(state
-            .get_workspace_package(&pkg.name, &workspace)
-            .await?
-            .is_none());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_garbage_collect_installed_packages() -> Result<()> {
-        let (state, _package_root) = setup_state_with_registry().await?;
-        let (workspace, _workspace_root) = test_workspace("global").await;
-
-        let pkg = "test-package@0.1.0".parse()?;
-        install_package(&state, &pkg, &workspace).await?;
-        remove_package(&state, &pkg, &workspace).await?;
-
-        assert!(state.get_installed_package(&pkg).await?.is_some());
-        garbage_collect_installed_packages(&state).await?;
-        assert!(state.get_installed_package(&pkg).await?.is_none());
-
-        Ok(())
     }
 }

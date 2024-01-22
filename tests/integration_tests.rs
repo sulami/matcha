@@ -181,6 +181,22 @@ async fn test_install_stricter_version() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_install_package_doesnt_register_if_build_failed() -> Result<()> {
+    let setup = TestSetup::default();
+
+    let out = run_test_command(&setup, &["package", "install", "failing-build"]).await?;
+    assert!(!out.status.success());
+
+    let out = run_test_command(&setup, &["package", "list"]).await?;
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8(out.stdout)?;
+    assert!(stdout.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_list_installed_packages() -> Result<()> {
     let setup = TestSetup::default();
 
@@ -518,6 +534,39 @@ async fn test_remove_workspace_with_packages() -> Result<()> {
 
     let stdout = String::from_utf8(out.stdout)?;
     assert_eq!(stdout, "global\n");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_garbage_collect_installed_packages() -> Result<()> {
+    let setup = TestSetup::default();
+
+    let out = run_test_command(&setup, &["registry", "add", &local_test_registry()]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "install", "package-with-artifact"]).await?;
+    assert!(out.status.success());
+
+    let out = run_test_command(&setup, &["package", "remove", "package-with-artifact"]).await?;
+    assert!(out.status.success());
+
+    assert!(setup
+        .package_root
+        .path()
+        .join("package-with-artifact")
+        .join("0.1.0")
+        .try_exists()?);
+
+    let out = run_test_command(&setup, &["package", "garbage-collect"]).await?;
+    assert!(out.status.success());
+
+    assert!(!setup
+        .package_root
+        .path()
+        .join("package-with-artifact")
+        .join("0.1.0")
+        .try_exists()?);
 
     Ok(())
 }
