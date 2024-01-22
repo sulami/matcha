@@ -126,7 +126,7 @@ struct Cli {
     /// Path to the packge directory
     #[arg(
         long,
-        env = "MATCHA_WORKSPACE_ROOT",
+        env = "MATCHA_PACKAGE_ROOT",
         default_value = "~/.local/matcha/packages"
     )]
     package_root: PathBuf,
