@@ -543,7 +543,9 @@ impl InstalledPackage {
     #[instrument]
     pub async fn delete(&self) -> Result<()> {
         let dir = self.directory();
-        remove_dir_all(dir).await?;
+        if dir.try_exists()? {
+            remove_dir_all(dir).await?;
+        }
         Ok(())
     }
 }
